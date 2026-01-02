@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
-
+#include "params.h"
 
 void initialize_system(double *p, double *v_grid, int N, double dx, double V_min, double mu, double tau);
 void swap_pointers(double **p, double **p_new);
@@ -23,14 +23,14 @@ double randn() {
 int main()
 {   
     // Sim parameters
-    int N = 200;
-    double D = 0.01;
-    double T = 1000.0;
+    int N = GRID_N;
+    double D = D;
+    double T = T_MAX;
     double V_min = -1.0;
     double V_max = 1.0;
     double dx = (V_max - V_min) / N;  
-    double stability_factor = 10.0;  
-    int correction = 1;
+    double stability_factor = 2.0;  
+    //int correction = 1;
 
     // allocate memory
     double *p = (double*)malloc(N * sizeof(double));
@@ -43,15 +43,15 @@ int main()
     double *v_grid = (double*)malloc(N * sizeof(double));
 
     // Neuron parameters
-    double mu = 1;
+    double mu = 0.8;
     double V_rest = 0.0;
-    double tau = 10.0;
-    int N_neurons = 500;
+    double tau = TAU;
+    double N_neurons = (double)N_NEURONS;
 
     // set dt dynamically
     double dt = set_dt(v_grid, N, stability_factor, dx, D);
     int steps = (int)(T / dt);
-
+    printf("Dynamic step size of %g determined\n", dt);
     // initialize the grid
     initialize_system(p, v_grid, N, dx, V_min, mu, tau);
     system("mkdir -p data");
@@ -63,14 +63,7 @@ int main()
 
     for (int t = 0; t < steps; t++)
     {
-        if (t % 100 == 0)
-        {
-            for (int i = 0; i < N; i++)
-            {
-                fprintf(f, "%f,", p[i]);
-            }
-            fprintf(f, "\n"); // New line for new time step
-        }
+
 
         // Operator splitting approach
         // Step 1 - Diffusion using crank nicholson
@@ -107,14 +100,24 @@ int main()
         // 4. Calculate Stochastic Rate A(t)
         double A_t = r_t + sqrt(r_t / N_neurons) * xi_t;
 
-        // save to file
-        fprintf(f_activity, "%g,%g,%g\n", t * dt, A_t, current_mass);
         // resetting
         int reset_idx = (int)((V_rest - V_min) / dx);
         p_new[reset_idx] += (A_t * dt) / dx;
 
         // swap pointers 
         swap_pointers(&p, &p_new);
+
+        // record data
+        if (t % 1000 == 0)
+        {
+            for (int i = 0; i < N; i++)
+            {
+                fprintf(f, "%f,", p[i]);
+            }
+            fprintf(f, "\n"); // New line for new time step
+                    // save to file
+            fprintf(f_activity, "%g,%g,%g\n", t * dt, A_t, current_mass);
+        }
     }
 
     fclose(f);

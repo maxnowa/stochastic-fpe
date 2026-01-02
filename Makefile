@@ -1,32 +1,33 @@
-# Compiler Settings
+# Compiler settings
 CC = gcc
-CFLAGS = -O2 -Wall
+CFLAGS = -O3 -Wall -lm
 
-# File Names
-TARGET = sfpe_solver
-SRC = stochastic_fpe.c
-DATA = diffusion_drift_data.csv
-PLOT_SCRIPT = plot_results.py  # Change this to your actual Python script name
+# Folders
+DATA_DIR = data
+PLOT_DIR = plots
 
-# --- Rules ---
+# Targets
+all: validate
 
-# Default target: compile, run, and plot
-all: $(TARGET) run plot
+# 1. Generate Parameters (Python -> C Header)
+params.h: config.py
+	python3 config.py
 
-# 1. Compile the C code
-$(TARGET): $(SRC)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC)
+# 2. Compile C Code (Depends on params.h existing)
+simulation: main.c params.h
+	$(CC) main.c -o sfpe_solver $(CFLAGS)
 
-# 2. Run the simulation
-run: $(TARGET)
-	@echo "Running simulation..."
-	./$(TARGET)
+# 3. Run FPE Simulation (Depends on executable)
+run_fpe: sfpe_solver
+	mkdir -p $(DATA_DIR)
+	./sfpe_solver
 
-# 3. Plot the results
-plot:
-	@echo "Plotting results..."
-	python3 $(PLOT_SCRIPT)
+# 4. Run Validation (Depends on FPE data)
+validate: run_fpe
+	mkdir -p $(PLOT_DIR)
+	python3 validation.py
 
-# Helper to clean up files
+# Cleanup
 clean:
-	rm -f $(TARGET) $(DATA)
+	rm -f sfpe_solver params.h
+	rm -rf $(DATA_DIR) $(PLOT_DIR)
