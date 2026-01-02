@@ -2,6 +2,7 @@
 .DS_Store
 .vscode
 *.dSYM
+__pycache__
 
 # Ignore C compiled binaries and object files
 *.out
@@ -11,6 +12,7 @@ sfpe_solver
 nrutil.C
 nrutil.h
 notes.md
+params.h
 
 # Ignore Data files (Don't upload simulation results!)
 *.csv
