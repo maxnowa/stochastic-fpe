@@ -7,7 +7,7 @@
 *.out
 *.o
 *.exe
-heat_solver
+sfpe_solver
 nrutil.C
 nrutil.h
 notes.md
@@ -16,3 +16,5 @@ notes.md
 *.csv
 *.dat
 *.txt
+plots/
+data/
