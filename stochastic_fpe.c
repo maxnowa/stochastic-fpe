@@ -2,9 +2,10 @@
 #include <math.h>
 #include <stdlib.h>
 
+
 void initialize_system(double *p, double *v_grid, int N, double dx, double V_min, double mu, double tau);
 void swap_pointers(double **p, double **p_new);
-void diffusion_crank_nicholson(double *p, int N, double D, double dx, double dt, 
+void diffusion_crank_nicholson(double *p, int N, double D, double tau, double dx, double dt, 
                                double *x, double *a, double *b, double *c, double *scratch);
 void thomas(const int X, double *x, const double *a, const double *b, const double *c, double *scratch);
 double slope_limiter(double *p, int i);
@@ -24,11 +25,12 @@ int main()
     // Sim parameters
     int N = 200;
     double D = 0.01;
-    double T = 20.0;
+    double T = 1000.0;
     double V_min = -1.0;
     double V_max = 1.0;
     double dx = (V_max - V_min) / N;  
     double stability_factor = 10.0;  
+    int correction = 1;
 
     // allocate memory
     double *p = (double*)malloc(N * sizeof(double));
@@ -44,19 +46,20 @@ int main()
     double mu = 1;
     double V_rest = 0.0;
     double tau = 10.0;
+    int N_neurons = 500;
 
     // set dt dynamically
     double dt = set_dt(v_grid, N, stability_factor, dx, D);
     int steps = (int)(T / dt);
 
-    printf("Dynamic dt set to: %g (Total Steps: %d)\n", dt, steps);
-
-
     // initialize the grid
     initialize_system(p, v_grid, N, dx, V_min, mu, tau);
+    system("mkdir -p data");
     printf("Allocating grid of size %d. Steps: %d\n", N, steps);
-    FILE *f = fopen("diffusion_drift_data.csv", "w");
-
+    FILE *f = fopen("data/diffusion_drift_data.csv", "w");
+    FILE *f_activity = fopen("data/activity_data.csv", "w");
+    // Write a header so you know which column is which
+    fprintf(f_activity, "time,A_t,mass\n");
 
     for (int t = 0; t < steps; t++)
     {
@@ -71,7 +74,7 @@ int main()
 
         // Operator splitting approach
         // Step 1 - Diffusion using crank nicholson
-        diffusion_crank_nicholson(p, N, D, dx, dt, x_rhs, a_diag, b_diag, c_diag, workspace);
+        diffusion_crank_nicholson(p, N, D, tau, dx, dt, x_rhs, a_diag, b_diag, c_diag, workspace);
         
         // Step 2 - Drift using 2nd order uwpind differencing
         drift(p, p_new, workspace, N, dx, dt, v_grid);
@@ -84,19 +87,38 @@ int main()
         }
         current_mass *= dx;
         
-        double fired_mass = 1.0 - current_mass;
+        // Normalization approach
+        //double J_out = 1.0 - current_mass;
+
+        // J_out is flux at threshold
+        double J_out = (D/tau) * (p_new[N-2] / dx);
+
+        // correction term - naive correction as 1/tau
+        //double lambda = correction ? (1.0 / tau) : 0.0;
+        //double r_t = J_out + lambda * (1 - current_mass);
+        // assuming poisson spike statistics, r(t) = J_out / mass, because lambda = r(t)
+        double r_t = 0.0;
+        if ( current_mass > 0.001) {
+            r_t = J_out / current_mass;
+        }
+        
+        //if (r_t < 0) r_t = 0.0;
+
+        // noise
+        double noise = randn();
+        double A_t = r_t + sqrt(r_t / N_neurons) * noise;
+        // save to file
+        fprintf(f_activity, "%g,%g,%g\n", t * dt, A_t, current_mass);
         // resetting
         int reset_idx = (int)((V_rest - V_min) / dx);
-        
-        if (fired_mass > 0.0) {
-            // Convert Mass -> Density (Height = Mass / Width)
-            p_new[reset_idx] += fired_mass / dx;
-        }
+        p_new[reset_idx] += (A_t * dt) / dx;
+
         // swap pointers 
         swap_pointers(&p, &p_new);
     }
 
     fclose(f);
+    fclose(f_activity);
     printf("Simulation Complete. Data saved to diffusion_drift_data.csv\n");
     // Free all memory
     free(p);
@@ -128,9 +150,9 @@ void initialize_system(double *p, double *v_grid, int N, double dx, double V_min
 }
 
 // diffusion calculated implicitly using crank nicholson
-void diffusion_crank_nicholson(double *p, int N, double D, double dx, double dt, double *x, double *a, double *b, double *c, double *scratch) {
+void diffusion_crank_nicholson(double *p, int N, double D, double tau, double dx, double dt, double *x, double *a, double *b, double *c, double *scratch) {
     int X = N -2;
-    double alpha = (D * dt) / (2.0 * dx * dx);
+    double alpha = ((D/tau) * dt) / (2.0 * dx * dx);
 
     for (int i = 0; i < X; i++) {
         a[i] = -alpha;
@@ -187,18 +209,16 @@ double slope_limiter(double *p, int i) {
 void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, double *v_grid) {
     for (int i = 1; i < N-2; i++) {
         double v_interface = 0.5 * (v_grid[i] + v_grid[i + 1]);
-
         flux[i] = get_upwind_flux(p, i, v_interface, dt, dx);
     }
     flux[0] = 0.0;
     flux[N-2] = 0.0;
     flux[N-1] = 0.0;
 
-    for (int i = 1; i < N-2; i++) {
+    for (int i = 1; i < N-1; i++) {
         p_new[i] = p[i] - (dt/dx) * (flux[i] - flux[i-1]);
     }
     p_new[0] = 0.0;
-    p_new[N-2] = 0.0;
     p_new[N-1] = 0.0;
 }
 
