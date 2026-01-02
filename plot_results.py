@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import numpy as np
-import os  # <--- NEW IMPORT
+import os
 
 # UPDATE DEFAULTS
 def plot_drift_diffusion(density_file="data/diffusion_drift_data.csv", activity_file="data/activity_data.csv"):
@@ -84,9 +84,6 @@ def plot_drift_diffusion(density_file="data/diffusion_drift_data.csv", activity_
     output_path = "plots/simulation_results.png"
     plt.savefig(output_path, dpi=300)
     print(f"Plot saved to: {output_path}")
-    
-    # Optional: Still show it if running interactively
-    # plt.show()
 
 if __name__ == "__main__":
     plot_drift_diffusion()

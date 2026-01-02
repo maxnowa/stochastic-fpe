@@ -14,7 +14,7 @@ nrutil.h
 notes.md
 params.h
 
-# Ignore Data files (Don't upload simulation results!)
+# Ignore Data files
 *.csv
 *.dat
 *.txt
