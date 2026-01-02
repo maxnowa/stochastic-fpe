@@ -40,6 +40,7 @@ def plot_drift_diffusion(filename="diffusion_drift_data.csv"):
     plt.xlabel("Grid Index (x)")
     plt.ylabel("Probability Density (p)")
     plt.axhline(0, color='black', linewidth=0.5, linestyle='--')
+    plt.ylim( 0,1.5)
     plt.legend()
     plt.grid(True, alpha=0.3)
     

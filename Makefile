@@ -3,8 +3,8 @@ CC = gcc
 CFLAGS = -O2 -Wall
 
 # File Names
-TARGET = heat_solver
-SRC = heat_equation.c
+TARGET = sfpe_solver
+SRC = stochastic_fpe.c
 DATA = diffusion_drift_data.csv
 PLOT_SCRIPT = plot_results.py  # Change this to your actual Python script name
 

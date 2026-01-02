@@ -2,32 +2,35 @@
 #include <math.h>
 #include <stdlib.h>
 
-void initialize_grid(double *p, int N);
-void calculate_drift_diffusion(double *p, double *p_new, double c, double dx, int N, double D, double dt);
+void initialize_system(double *p, double *v_grid, int N, double dx, double V_min, double mu, double tau);
 void swap_pointers(double **p, double **p_new);
 void diffusion_crank_nicholson(double *p, int N, double D, double dx, double dt, 
                                double *x, double *a, double *b, double *c, double *scratch);
-// Note: "restrict" keyword requires C99 standard (gcc -std=c99)
 void thomas(const int X, double *x, const double *a, const double *b, const double *c, double *scratch);
-// Prototype
 double slope_limiter(double *p, int i);
-void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, double velocity);
+void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, double *v_grid);
+double set_dt(double *v_grid, int N, double sf, double dx, double D);
+double get_upwind_flux(double *p, int i, double v, double dt, double dx);
+
+// Generates standard normal random number N(0,1)
+double randn() {
+    double u = (double)rand() / RAND_MAX;
+    double v = (double)rand() / RAND_MAX;
+    return sqrt(-2.0 * log(u)) * cos(2.0 * M_PI * v);
+}
 
 int main()
-{
-    double velocity = 0.1;
+{   
+    // Sim parameters
     int N = 200;
-    double L = 2.0;
-    double dx = L/N;
-    double D = 0.05;
-    double T = 3.0;
+    double D = 0.01;
+    double T = 20.0;
+    double V_min = -1.0;
+    double V_max = 1.0;
+    double dx = (V_max - V_min) / N;  
+    double stability_factor = 10.0;  
 
-    double dt = (0.8 * dx * dx) / (2*D + velocity * dx);
-    int steps = (int)(T/dt);
-    
-    printf("dt = %g\n", dt);
-    printf("Allocating grid of size %d. Steps: %d\n", N, steps);
-
+    // allocate memory
     double *p = (double*)malloc(N * sizeof(double));
     double *p_new = (double*)malloc(N * sizeof(double));
     double *workspace = (double*)malloc(N * sizeof(double));
@@ -35,15 +38,23 @@ int main()
     double *b_diag = (double*)malloc(N * sizeof(double));
     double *c_diag = (double*)malloc(N * sizeof(double));
     double *x_rhs = (double*)malloc(N * sizeof(double));
+    double *v_grid = (double*)malloc(N * sizeof(double));
 
-    // if (p==NULL) {
-    //     printf("Memory allocation failed.");
-    //     return 1;
-    // }
+    // Neuron parameters
+    double mu = 1;
+    double V_rest = 0.0;
+    double tau = 10.0;
+
+    // set dt dynamically
+    double dt = set_dt(v_grid, N, stability_factor, dx, D);
+    int steps = (int)(T / dt);
+
+    printf("Dynamic dt set to: %g (Total Steps: %d)\n", dt, steps);
+
 
     // initialize the grid
-    initialize_grid(p, N);
-
+    initialize_system(p, v_grid, N, dx, V_min, mu, tau);
+    printf("Allocating grid of size %d. Steps: %d\n", N, steps);
     FILE *f = fopen("diffusion_drift_data.csv", "w");
 
 
@@ -63,11 +74,26 @@ int main()
         diffusion_crank_nicholson(p, N, D, dx, dt, x_rhs, a_diag, b_diag, c_diag, workspace);
         
         // Step 2 - Drift using 2nd order uwpind differencing
-        drift(p, p_new, workspace, N, dx, dt, velocity);
-
+        drift(p, p_new, workspace, N, dx, dt, v_grid);
+        
+        // Step 3 - Adding probability mass back
+        // summing over p to get firing rate (mass)
+        double current_mass = 0.0;
+        for (int i = 0; i < N; i++) {
+            current_mass += p_new[i];
+        }
+        current_mass *= dx;
+        
+        double fired_mass = 1.0 - current_mass;
+        // resetting
+        int reset_idx = (int)((V_rest - V_min) / dx);
+        
+        if (fired_mass > 0.0) {
+            // Convert Mass -> Density (Height = Mass / Width)
+            p_new[reset_idx] += fired_mass / dx;
+        }
         // swap pointers 
         swap_pointers(&p, &p_new);
-        
     }
 
     fclose(f);
@@ -86,13 +112,18 @@ int main()
 
 
 
-void initialize_grid(double *p, int N) {
+void initialize_system(double *p, double *v_grid, int N, double dx, double V_min, double mu, double tau) {
+    // initialize the state
     for (int i=0; i < N; i++) {
-        if (i > 0.45 * N && i < 0.55*N) {
-            p[i] = 1.0;
-        } else {
-            p[i] = 0.0;
-        }       
+        double v_real = V_min + i *dx;
+        v_grid[i] = (mu - v_real) /tau;
+        p[i] = 0.0;
+    }
+    // intialize system as delta spike
+    int index_0 = (int)((0.0-V_min) / dx);
+    // Safety check: ensure index is within bounds
+    if (index_0 >= 0 && index_0 < N) {
+        p[index_0] = 1.0 / dx; // Normalize so Area = 1.0
     }
 }
 
@@ -122,8 +153,6 @@ void diffusion_crank_nicholson(double *p, int N, double D, double dx, double dt,
     p[0] = 0.0;
     p[N-1] = 0.0;
 }
-
-
 
 void thomas(const int X, double *x, const double *a, const double *b, const double *c, double *scratch) {
     // Note: removed 'restrict' from args here to match standard C, 
@@ -155,19 +184,33 @@ double slope_limiter(double *p, int i) {
 }
 
 // drift caclulated using 2nd order upwind differencing scheme
-void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, double velocity) {
-    double courant = (velocity * dt) / dx;
-    for (int i = 1; i < N-1; i++) {
-        flux[i] = velocity * (p[i] + 0.5 * (1-courant) * slope_limiter(p, i));
+void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, double *v_grid) {
+    for (int i = 1; i < N-2; i++) {
+        double v_interface = 0.5 * (v_grid[i] + v_grid[i + 1]);
+
+        flux[i] = get_upwind_flux(p, i, v_interface, dt, dx);
     }
     flux[0] = 0.0;
+    flux[N-2] = 0.0;
     flux[N-1] = 0.0;
 
-    for (int i = 1; i < N-1; i++) {
+    for (int i = 1; i < N-2; i++) {
         p_new[i] = p[i] - (dt/dx) * (flux[i] - flux[i-1]);
     }
     p_new[0] = 0.0;
+    p_new[N-2] = 0.0;
     p_new[N-1] = 0.0;
+}
+
+double get_upwind_flux(double *p, int i, double v, double dt, double dx) {
+    double courant = (v * dt) / dx;
+    if (v >= 0) {
+        double slope = slope_limiter(p, i);
+        return v * (p[i] + 0.5 * (1.0 - courant) * slope);
+    } else {
+        double slope = slope_limiter(p, i+1);
+        return v * (p[i+1] - 0.5 * (1.0 + courant) * slope);
+    }
 }
 
 // void calculate_drift_diffusion(double *p, double *p_new, double c, double dx, int N, double D, double dt) {
@@ -183,3 +226,23 @@ void swap_pointers(double **p, double **p_new) {
     *p = *p_new;
     *p_new = temp;
 }
+
+double set_dt(double *v_grid, int N, double sf, double dx, double D) {
+    double max_v = 0.0;
+    double dt = 0.0;
+    for (int i = 0; i < N; i++) {
+        double cells_per_second = fabs(v_grid[i]) / dx;
+        if (cells_per_second > max_v) {
+            max_v = cells_per_second;
+        }
+    }
+    // Calculate dt
+    if (max_v == 0.0) {
+        dt = 0.1 * (dx * dx) / (2.0 * D); 
+    } else {
+        // This ensures a particle takes at least 'sf' steps to cross one cell
+        dt = 1.0 / (max_v * sf);
+    }
+    return dt;
+}
+
