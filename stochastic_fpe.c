@@ -103,10 +103,10 @@ int main()
         }
         
         //if (r_t < 0) r_t = 0.0;
+        double xi_t = randn() / sqrt(dt); 
+        // 4. Calculate Stochastic Rate A(t)
+        double A_t = r_t + sqrt(r_t / N_neurons) * xi_t;
 
-        // noise
-        double noise = randn();
-        double A_t = r_t + sqrt(r_t / N_neurons) * noise;
         // save to file
         fprintf(f_activity, "%g,%g,%g\n", t * dt, A_t, current_mass);
         // resetting

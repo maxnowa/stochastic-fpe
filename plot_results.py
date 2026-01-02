@@ -73,7 +73,7 @@ def plot_drift_diffusion(density_file="data/diffusion_drift_data.csv", activity_
     ax3.set_ylabel("Mass")
     ax3.set_xlabel("Time (ms)")
     ax3.axhline(1.0, color='red', linestyle='--', linewidth=1, label="Target")
-    ax3.set_ylim(0.95, 1.05)
+    ax3.set_ylim(0.9, 1.1)
     ax3.set_xlim(0, time_vals[-1])
     ax3.grid(True, alpha=0.3)
     ax3.legend(loc='lower right')
