@@ -1,0 +1,17 @@
+# Ignore Mac system files
+.DS_Store
+.vscode
+
+# Ignore C compiled binaries and object files
+*.out
+*.o
+*.exe
+diffusion_solver
+nrutil.C
+nrutil.h
+notes.md
+
+# Ignore Data files (Don't upload simulation results!)
+*.csv
+*.dat
+*.txt
