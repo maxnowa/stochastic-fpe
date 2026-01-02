@@ -1,6 +1,7 @@
 # Ignore Mac system files
 .DS_Store
 .vscode
+*.dSYM
 
 # Ignore C compiled binaries and object files
 *.out
