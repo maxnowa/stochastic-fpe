@@ -6,8 +6,8 @@ PARAMS = {
     "N_NEURONS": 500,       # Size of network
     "T_MAX":     1000.0,    # Total time (ms)
     "TAU":       10.0,      # Membrane time constant (ms)
-    "MU":        0.8,       # Drift (Fluctuation regime < 1.0)
-    "D":         0.05,      # Noise strength
+    "MU":        1.2,       # Drift (Fluctuation regime < 1.0)
+    "D":         0.02,      # Noise strength
     "V_TH":      1.0,       # Threshold
     "V_RESET":   0.0,       # Reset potential
     "DT_NET":    0.02,      # Network Sim time step (ms) - TUNED value
