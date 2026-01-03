@@ -89,8 +89,8 @@ def run_network_validation(fpe_file="data/activity_data.csv"):
 
     # Z-Score Normalization (Mean=0, Std=1)
     # This removes unit mismatch (kHz vs Hz) and focuses on dynamics
-    activity_fpe_norm = (activity_fpe - np.mean(activity_fpe)) / np.std(activity_fpe)
-    activity_net_norm = (activity_net - np.mean(activity_net)) / np.std(activity_net)
+    activity_fpe_norm = (activity_fpe - np.mean(activity_fpe)) / (np.std(activity_fpe) + 1e-6)
+    activity_net_norm = (activity_net - np.mean(activity_net)) / (np.std(activity_net) + 1e-6)
 
     # Welch's Method
     # nperseg=2048 gives good frequency resolution for T=1000ms
