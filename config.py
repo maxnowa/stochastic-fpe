@@ -2,16 +2,17 @@
 import math
 
 # --- 1. Define Physics Parameters ---
+# config.py
 PARAMS = {
-    "N_NEURONS": 500,       # Size of network
-    "T_MAX":     1000.0,    # Total time (ms)
-    "TAU":       10.0,      # Membrane time constant (ms)
-    "MU":        0.8,       # Drift (Fluctuation regime < 1.0)
-    "D":         0.05,      # Noise strength
-    "V_TH":      1.0,       # Threshold
-    "V_RESET":   0.0,       # Reset potential
-    "DT_NET":    0.02,      # Network Sim time step (ms) - TUNED value
-    "GRID_N":    400        # FPE Grid Size
+    "PARAM_N_NEURONS": 10e9, # neuron number
+    "PARAM_T_MAX":     1000.0, # simulation time (ms)
+    "PARAM_TAU":       10.0, # membrane time constant (ms)
+    "PARAM_MU":        1.2, # drift
+    "PARAM_D":         0.01, # noise strength
+    "PARAM_V_TH":      1.0, # threshold
+    "PARAM_V_RESET":   0.0, # reset potential
+    "PARAM_DT_NET":    0.02, # network time step size
+    "PARAM_GRID_N":    400  # FPE grid
 }
 
 # --- 2. Generate C Header ---

@@ -8,11 +8,9 @@ __pycache__
 *.out
 *.o
 *.exe
-sfpe_solver
-nrutil.C
-nrutil.h
 notes.md
-params.h
+src/params.h
+bin/
 
 # Ignore Data files
 *.csv
@@ -20,3 +18,5 @@ params.h
 *.txt
 plots/
 data/
+todo.md
+literature/
