@@ -25,7 +25,7 @@ int main()
 {
     // Sim parameters
     int N = PARAM_GRID_N;
-    double D = PARAM_D; 
+    double D = PARAM_D;
     double T = PARAM_T_MAX;
     double V_min = -1.0;
     double V_max = 1.0;
@@ -64,13 +64,14 @@ int main()
     // initialize buffer to block write the data
     float p_buffer[N];
     // --- INSERT 1: Setup Timer ---
-    int total_steps = (int)(PARAM_T_MAX / dt); 
-    int report_interval = total_steps / 1000; 
-    if (report_interval == 0) report_interval = 1;
+    int total_steps = (int)(PARAM_T_MAX / dt);
+    int report_interval = total_steps / 1000;
+    if (report_interval == 0)
+        report_interval = 1;
     int save_interval = 100;
     clock_t start_time = clock();
     double A_accumulator = 0.0;
-    
+
     for (int t = 0; t < steps; t++)
     {
 
@@ -122,8 +123,10 @@ int main()
         swap_pointers(&p, &p_new);
 
         // record data
-        if (t % 100 == 0) {
-            for (int i = 0; i < N; i++) {
+        if (t % 100 == 0)
+        {
+            for (int i = 0; i < N; i++)
+            {
                 p_buffer[i] = (float)p[i];
             }
             fwrite(p_buffer, sizeof(float), N, fp_density);
@@ -132,25 +135,27 @@ int main()
             float act_data[2];
             act_data[0] = (float)A_avg;
             act_data[1] = (float)current_mass;
-            
+
             // Write 2 floats at once
             fwrite(act_data, sizeof(float), 2, fp_activity);
             A_accumulator = 0.0;
         }
-        
+
         // --- INSERT 2: PRINT PROGRESS ---
-        if (t % report_interval == 0) {
+        if (t % report_interval == 0)
+        {
             double progress = (double)t / total_steps;
-            
+
             // Calculate ETA
             clock_t now = clock();
             double elapsed = (double)(now - start_time) / CLOCKS_PER_SEC;
             double eta = 0.0;
-            if (progress > 0) {
+            if (progress > 0)
+            {
                 eta = elapsed * (1.0 / progress - 1.0);
             }
 
-            printf("\r[%.1f%%] Step: %d | ETA: %.1fs", 
+            printf("\r[%.1f%%] Step: %d | ETA: %.1fs",
                    progress * 100.0, t, eta);
             fflush(stdout);
         }
@@ -167,7 +172,7 @@ int main()
     free(c_diag);
     free(x_rhs);
 
-    printf("\r[100%%] Simulation Complete. Total time: %.1fs\n", 
+    printf("\r[100%%] Simulation Complete. Total time: %.1fs\n",
            (double)(clock() - start_time) / CLOCKS_PER_SEC);
     return 0;
 }
@@ -223,8 +228,6 @@ void diffusion_crank_nicholson(double *p, int N, double D, double tau, double dx
 
 void thomas(const int X, double *x, const double *a, const double *b, const double *c, double *scratch)
 {
-    // Note: removed 'restrict' from args here to match standard C,
-    // but kept logic. Ideally compile with -O2.
 
     scratch[0] = c[0] / b[0];
     x[0] = x[0] / b[0];
@@ -244,12 +247,15 @@ void thomas(const int X, double *x, const double *a, const double *b, const doub
 
 double slope_limiter(double *p, int i)
 {
+    // we look at the slope of the density at the left and right cell
     double slope_left = p[i] - p[i - 1];
     double slope_right = p[i + 1] - p[i];
+    // go back to first order if the slope is not the same
     if (slope_left * slope_right <= 0.0)
     {
         return 0.0;
     }
+    // return value based on slope
     else
     {
         double limit = (2 * slope_left * slope_right) / (slope_left + slope_right);
@@ -257,11 +263,12 @@ double slope_limiter(double *p, int i)
     }
 }
 
-// drift caclulated using 2nd order upwind differencing scheme
+// drift caclulated using 2nd order upwind differencing scheme - we are using Lax-Wendroff correction and van Leer flux limiter (TVD scheme)
 void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, double *v_grid)
 {
     for (int i = 1; i < N - 2; i++)
     {
+        // we want the avergae velocity at the interface
         double v_interface = 0.5 * (v_grid[i] + v_grid[i + 1]);
         flux[i] = get_upwind_flux(p, i, v_interface, dt, dx);
     }
@@ -271,6 +278,7 @@ void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, 
 
     for (int i = 1; i < N - 1; i++)
     {
+        // change in probability mass
         p_new[i] = p[i] - (dt / dx) * (flux[i] - flux[i - 1]);
     }
     p_new[0] = 0.0;
@@ -279,12 +287,16 @@ void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, 
 
 double get_upwind_flux(double *p, int i, double v, double dt, double dx)
 {
+    // Lax-Wendroff for temporal correction - we correct for how much of a cell the probability moves in one timestep
+    // this make it second order in time
     double courant = (v * dt) / dx;
+    // drift is going from left to right (we only change indexing direction)
     if (v >= 0)
     {
         double slope = slope_limiter(p, i);
         return v * (p[i] + 0.5 * (1.0 - courant) * slope);
     }
+    // drift is going from right to left
     else
     {
         double slope = slope_limiter(p, i + 1);
