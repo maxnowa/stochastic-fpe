@@ -15,7 +15,7 @@ VALIDATION_DIR = validation
 TARGET_BIN = $(BIN_DIR)/sfpe_solver
 
 # Default Target
-all: plot validate
+all: clean plot validate
 
 # 1. Generate Parameters
 # Logic: Run config.py. If it generates params.h in root, move it to src/

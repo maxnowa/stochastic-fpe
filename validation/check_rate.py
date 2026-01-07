@@ -10,6 +10,9 @@ except ImportError:
     print("Warning: config.py not found. Using default parameters.")
     PARAMS = None
 
+# --- CONFIG ---
+SMOOTHING_WINDOW_MS = 50.0  # Window size for smoothing
+
 def steady_state_rate(mu, D, tau, V_th, V_reset, t_ref=0):
     """
     Lindner Approximation for steady state firing rate, sub- and suprathreshold regime.
@@ -30,7 +33,7 @@ def steady_state_rate(mu, D, tau, V_th, V_reset, t_ref=0):
         T_total = tau * (term_det - term_corr) + t_ref
         return 1000.0 / T_total
 
-def plot_stationary_check(fpe_file="data/activity_data.csv"):
+def plot_stationary_check(fpe_file="data/activity.bin"):
     
     # --- 1. Load Parameters ---
     if PARAMS:
@@ -39,20 +42,34 @@ def plot_stationary_check(fpe_file="data/activity_data.csv"):
         tau = PARAMS["PARAM_TAU"]
         V_th = PARAMS["PARAM_V_TH"]
         V_reset = PARAMS["PARAM_V_RESET"]
+        T_max = PARAMS["PARAM_T_MAX"] # Needed for time reconstruction
     else:
         mu, D, tau = 1.2, 0.01, 10.0
         V_th, V_reset = 1.0, 0.0
+        T_max = 20000.0
 
-    # --- 2. Load Simulation Data ---
+    # --- 2. Load Simulation Data (Binary) ---
     if not os.path.exists(fpe_file):
         print(f"Error: {fpe_file} not found.")
         return
 
-    data = np.genfromtxt(fpe_file, delimiter=",", skip_header=1)
-    if np.isnan(data[0, -1]): data = data[:, :-1]
+    try:
+        # Read raw float32 data
+        raw_data = np.fromfile(fpe_file, dtype=np.float32)
+        # Reshape: [Rate, Mass] (2 columns)
+        data = raw_data.reshape(-1, 2)
         
-    time = data[:, 0]
-    rate_sim = data[:, 1] * 1000.0 # Convert kHz -> Hz
+        # Reconstruct Time Axis
+        time = np.linspace(0, T_max, len(data))
+        dt_effective = time[1] - time[0]
+        
+        # Extract Rate and Convert kHz -> Hz
+        # Col 0 is Rate (in 1/ms), Col 1 is Mass
+        rate_sim = data[:, 0] * 1000.0
+        
+    except ValueError:
+        print(f"Error reading binary file {fpe_file}. Format mismatch.")
+        return
 
     # --- 3. Calculate Theories ---
     # Exact (Siegert) from function lif.py 
@@ -68,11 +85,44 @@ def plot_stationary_check(fpe_file="data/activity_data.csv"):
     start_idx = int(len(time) * 0.3)
     rate_sim_mean = np.mean(rate_sim[start_idx:])
     
+    # --- 4. Prepare Data for Plotting (Smoothing & Downsampling) ---
+    
+    # A. Calculate Smoothing
+    window_bins = int(SMOOTHING_WINDOW_MS / dt_effective)
+    rate_smooth = rate_sim 
+    time_smooth = time
 
-    plt.figure(figsize=(10, 7))    
-    plt.plot(time, rate_sim, 
-             label=f'FPE Simulation (Mean: {rate_sim_mean:.2f} Hz)', 
-             color='tab:orange', linewidth=2, alpha=0.6)
+    if window_bins > 1:
+        kernel = np.ones(window_bins) / window_bins
+        rate_smooth = np.convolve(rate_sim, kernel, mode='same')
+        
+        # Remove edge artifacts
+        valid_slice = slice(window_bins, -window_bins)
+        rate_smooth = rate_smooth[valid_slice]
+        time_smooth = time[valid_slice]
+
+    # B. Calculate Downsampling Factor
+    # Target max 50,000 points to prevent OverflowError
+    ds_factor = 10
+    if len(time) > 50000:
+        ds_factor = int(len(time) / 50000)
+    
+    # Downsample smoothed data less aggressively to keep it looking nice
+    ds_smooth = max(1, ds_factor // 2)
+
+    # --- 5. Plot ---
+    plt.figure(figsize=(10, 7))  
+    plt.rcParams['agg.path.chunksize'] = 10000 # Prevent rendering crash
+    
+    # Plot Raw (Light Orange, Downsampled)
+    plt.plot(time[::ds_factor], rate_sim[::ds_factor], 
+             label='FPE Simulation (Raw)', 
+             color='tab:orange', linewidth=0.5, alpha=0.3)
+    
+    # Plot Smoothed (Red, Downsampled)
+    plt.plot(time_smooth[::ds_smooth], rate_smooth[::ds_smooth], 
+             label=f'Smoothed ({SMOOTHING_WINDOW_MS}ms, Mean: {rate_sim_mean:.2f} Hz)', 
+             color='#D62728', linewidth=1.5)
     
     # Plot Exact Theory
     plt.axhline(rate_siegert, color='blue', linestyle='--', linewidth=2, 
@@ -92,9 +142,11 @@ def plot_stationary_check(fpe_file="data/activity_data.csv"):
     # Add info box (Errors only)
     info = (f"Siegert Err: {abs(rate_sim_mean-rate_siegert)/rate_siegert*100:.2f}%\n"
             f"Lindner Err: {abs(rate_sim_mean-rate_lindner)/rate_lindner*100:.2f}%")
-    plt.text(time[0], max(rate_sim)*0.9, info, bbox=dict(facecolor='white', alpha=0.9))
+    plt.text(time[0], max(rate_sim_mean, rate_siegert) * 1.1, info, bbox=dict(facecolor='white', alpha=0.9))
 
-    plt.ylim(0, max(rate_sim_mean, rate_siegert) * 1.5)
+    # Smart Y-limits based on smoothed data + margin
+    y_max = max(rate_sim_mean, rate_siegert) * 2
+    plt.ylim(0, y_max)
     
     save_path = "plots/check_stationary_rate.png"
     if not os.path.exists("plots"): os.makedirs("plots")

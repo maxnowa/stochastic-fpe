@@ -4,8 +4,8 @@ import math
 # --- 1. Define Physics Parameters ---
 # config.py
 PARAMS = {
-    "PARAM_N_NEURONS": 10e9, # neuron number
-    "PARAM_T_MAX":     1000.0, # simulation time (ms)
+    "PARAM_N_NEURONS": 500, # neuron number
+    "PARAM_T_MAX":     10000.0, # simulation time (ms)
     "PARAM_TAU":       10.0, # membrane time constant (ms)
     "PARAM_MU":        1.2, # drift
     "PARAM_D":         0.01, # noise strength

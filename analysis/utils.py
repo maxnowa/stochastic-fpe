@@ -1,4 +1,4 @@
-import numpy as np
+from numpy import *
 from numpy.fft import fft
 def periodogram(data,dt,df):
      """
@@ -13,7 +13,7 @@ def periodogram(data,dt,df):
      x=data[:Ntrials*NFFT].reshape((-1,NFFT))
      ntrials=x.shape[0]
      xF=fft(x)
-     S=sum(np.real(xF*xF.conjugate()),axis=0)*dt/(NFFT-1)/ntrials
+     S=sum(real(xF*xF.conjugate()),axis=0)*dt/(NFFT-1)/ntrials
      psd=S[1:int(NFFT/2)]
-     freq=df*np.arange(NFFT/2-1)+df
+     freq=df*arange(NFFT/2-1)+df
      return (freq,psd)
