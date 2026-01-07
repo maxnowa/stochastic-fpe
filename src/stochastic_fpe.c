@@ -57,18 +57,20 @@ int main()
     initialize_system(p, v_grid, N, dx, V_min, mu, tau);
     system("mkdir -p data");
     printf("Allocating grid of size %d. Steps: %d\n", N, steps);
-    FILE *f = fopen("data/diffusion_drift_data.csv", "w");
-    FILE *f_activity = fopen("data/activity_data.csv", "w");
-    // Write a header so you know which column is which
-    fprintf(f_activity, "time,A_t,mass\n");
 
+    FILE *fp_density = fopen("data/density.bin", "wb");
+    FILE *fp_activity = fopen("data/activity.bin", "wb");
+
+    // initialize buffer to block write the data
+    float p_buffer[N];
     // --- INSERT 1: Setup Timer ---
     int total_steps = (int)(PARAM_T_MAX / dt); 
-    int report_interval = total_steps / 100; 
+    int report_interval = total_steps / 1000; 
     if (report_interval == 0) report_interval = 1;
-
+    int save_interval = 100;
     clock_t start_time = clock();
-
+    double A_accumulator = 0.0;
+    
     for (int t = 0; t < steps; t++)
     {
 
@@ -95,11 +97,12 @@ int main()
         double J_out = (D / tau) * (p_new[N - 2] / dx);
 
         // correction term - naive correction as 1/tau
-        // double lambda = correction ? (1.0 / tau) : 0.0;
+        // double lambda = 1.0 / tau;
         // double r_t = J_out + lambda * (1 - current_mass);
+
         // assuming poisson spike statistics, r(t) = J_out / mass, because lambda = r(t)
         double r_t = 0.0;
-        if (current_mass > 0.001)
+        if (current_mass > 0.0001)
         {
             r_t = J_out / current_mass;
         }
@@ -109,6 +112,8 @@ int main()
         // 4. Calculate Stochastic Rate A(t)
         double A_t = r_t + sqrt(r_t / N_neurons) * xi_t;
 
+        A_accumulator += A_t;
+
         // resetting
         int reset_idx = (int)((V_rest - V_min) / dx);
         p_new[reset_idx] += (A_t * dt) / dx;
@@ -117,17 +122,22 @@ int main()
         swap_pointers(&p, &p_new);
 
         // record data
-        if (t % 1000 == 0)
-        {
-            for (int i = 0; i < N; i++)
-            {
-                fprintf(f, "%f,", p[i]);
+        if (t % 100 == 0) {
+            for (int i = 0; i < N; i++) {
+                p_buffer[i] = (float)p[i];
             }
-            fprintf(f, "\n"); // New line for new time step
-                              // save to file
-            fprintf(f_activity, "%g,%g,%g\n", t * dt, A_t, current_mass);
-        }
+            fwrite(p_buffer, sizeof(float), N, fp_density);
 
+            double A_avg = A_accumulator / save_interval;
+            float act_data[2];
+            act_data[0] = (float)A_avg;
+            act_data[1] = (float)current_mass;
+            
+            // Write 2 floats at once
+            fwrite(act_data, sizeof(float), 2, fp_activity);
+            A_accumulator = 0.0;
+        }
+        
         // --- INSERT 2: PRINT PROGRESS ---
         if (t % report_interval == 0) {
             double progress = (double)t / total_steps;
@@ -140,14 +150,14 @@ int main()
                 eta = elapsed * (1.0 / progress - 1.0);
             }
 
-            printf("\r[%.0f%%] Step: %d | ETA: %.1fs", 
+            printf("\r[%.1f%%] Step: %d | ETA: %.1fs", 
                    progress * 100.0, t, eta);
             fflush(stdout);
         }
     }
 
-    fclose(f);
-    fclose(f_activity);
+    fclose(fp_density);
+    fclose(fp_activity);
     // Free all memory
     free(p);
     free(p_new);
