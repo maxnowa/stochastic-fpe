@@ -80,6 +80,7 @@ def run_network(N, mu, D, tau, V_th, V_reset, dt_net):
 def calculate_psd(activity_net, activity_fpe, method="bartlett"):
     print(f"\nComputing Spectra using {method} method...")
     
+    df = 1.0/T_max
     dt_net_sec = dt_net / 1000.0
     dt_fpe_sec = dt_fpe / 1000.0
     
@@ -91,13 +92,14 @@ def calculate_psd(activity_net, activity_fpe, method="bartlett"):
             freq_net, psd_net = welch(activity_net, fs=fs_net, nperseg=2048)
         
     elif method == "bartlett":
-        freq_fpe, psd_fpe = periodogram(activity_fpe, dt_fpe_sec, df=1.0)
+        freq_fpe, psd_fpe = periodogram(activity_fpe, dt_fpe_sec, df=0.1)
         if activity_net is not np.nan:
-            freq_net, psd_net = periodogram(activity_net, dt_net_sec, df=1.0)
+            freq_net, psd_net = periodogram(activity_net, dt_net_sec, df=0.1)
     
     # apply smoothing
-    freq_fpe, psd_fpe = log_smooth(freq_fpe, psd_fpe, bins_per_decade=25)
-    freq_net, psd_net = log_smooth(freq_net, psd_net, bins_per_decade=25)
+    freq_fpe, psd_fpe = log_smooth(freq_fpe, psd_fpe, bins_per_decade=20)
+    if activity_net is not np.nan:
+        freq_net, psd_net = log_smooth(freq_net, psd_net, bins_per_decade=20)
     # Calculate Theoretical White Noise Level (Poisson Limit)
     # 1. Normalize params for dimensionless function
     mu_dim = (mu - V_reset) / (V_th - V_reset)
@@ -121,10 +123,10 @@ def calculate_psd(activity_net, activity_fpe, method="bartlett"):
     plt.axhline(psd_theory_level, color='green', linestyle=':', linewidth=2, 
                 label=f'Theory Limit (Rate/N): {psd_theory_level:.4f}')
     
-    plt.title(f"PSD Validation Check (N={N}, $\mu$={mu}, D={D})")
+    plt.title(fr"PSD Validation Check (N={N}, $\mu$={mu}, D={D}, $\tau$={tau})")
     plt.xlabel("Frequency (Hz)")
     plt.ylabel("Power Spectral Density")
-    plt.xlim(1, 1e4)
+    #plt.xlim(0.1, 1e4)
     
     plt.legend()
     plt.grid(True, which="both", alpha=0.3)
