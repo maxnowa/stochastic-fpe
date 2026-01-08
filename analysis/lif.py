@@ -1,5 +1,5 @@
 from numpy import *
-from scipy.special import erfc, erf
+from scipy.special import erfc, erf, erfcx
 from scipy.integrate import quad, dblquad
 from scipy.optimize import newton
 
@@ -41,6 +41,25 @@ def rate_whitenoise_benji2(Vrest, tau, D, Vth, Vreset):
     T = T * sqrt(pi)
     return 1.0 / (T * tau)
 
+def cv_benji(mu, D):
+
+    def Psi2(x):
+        return erfcx(x)
+    a1 = (mu - 1) / sqrt(2 * D)
+    a2 = mu / sqrt(2 * D)
+    T, _ = quad(Psi2, a1, a2)
+    T *= sqrt(pi)
+
+    def psi4(y):
+        if y > a2: return 0.0
+        return exp(y**2)
+    def psi3(x):
+        z, _ = quad(psi4, a1, x)
+        return z
+    def outer(x):
+        return 2 * pi * exp(-x**2) * (erfcx(x)**2) * psi3(x)
+    B, _ = quad(outer, a1, 100) # Integrate to infinity (approx 100)
+    return sqrt(B) / T
 
 # def cv_benji(mu,sigma_x):
 #     """CV of white-noise driven LIF neuron according Lindner PhD thesis p.48
