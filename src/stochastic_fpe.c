@@ -30,7 +30,7 @@ int main()
     double V_min = -1.0;
     double V_max = 1.0;
     double dx = (V_max - V_min) / N;
-    double stability_factor = 2.0;
+    double stability_factor = 4.0;
     // since we have a constant mu and D, R0 and CV are constant
     double lambda = PARAM_R0 / PARAM_CV;
     // int correction = 1;
@@ -51,13 +51,14 @@ int main()
     double tau = PARAM_TAU;
     double N_neurons = (double)PARAM_N_NEURONS;
 
+    // initialize the grid
+    initialize_system(p, v_grid, N, dx, V_min, mu, tau);
+    system("mkdir -p data");
+
     // set dt dynamically
     double dt = set_dt(v_grid, N, stability_factor, dx, D);
     int steps = (int)(T / dt);
     printf("Dynamic step size of %g determined\n", dt);
-    // initialize the grid
-    initialize_system(p, v_grid, N, dx, V_min, mu, tau);
-    system("mkdir -p data");
     printf("Allocating grid of size %d. Steps: %d\n", N, steps);
 
     FILE *fp_density = fopen("data/density.bin", "wb");
@@ -70,9 +71,8 @@ int main()
     int report_interval = total_steps / 1000;
     if (report_interval == 0)
         report_interval = 1;
-    int save_interval = 1;
+    int save_interval = 1000;
     clock_t start_time = clock();
-    double A_accumulator = 0.0;
 
     for (int t = 0; t < steps; t++)
     {
@@ -152,7 +152,6 @@ int main()
         double xi_t = randn() / sqrt(dt);
         // -- 4. Calculate Stochastic Rate A(t) --
         double A_t = r_t + sqrt(r_t / N_neurons) * xi_t;
-        A_accumulator += A_t;
 
         // -- resetting --
         int reset_idx = (int)((V_rest - V_min) / dx);
@@ -162,7 +161,7 @@ int main()
         // swap pointers
         swap_pointers(&p, &p_new);
 
-        // record data
+        // record density at 
         if (t % save_interval == 0)
         {
             for (int i = 0; i < N; i++)
@@ -170,17 +169,15 @@ int main()
                 p_buffer[i] = (float)p[i];
             }
             fwrite(p_buffer, sizeof(float), N, fp_density);
-
-            double A_avg = A_accumulator / save_interval;
-            float act_data[2];
-            act_data[0] = (float)A_avg;
-            act_data[1] = (float)current_mass;
-
-            // Write 2 floats at once
-            fwrite(act_data, sizeof(float), 2, fp_activity);
-            A_accumulator = 0.0;
         }
 
+        // save activity data at every timestep
+        float act_data[2];
+        act_data[0] = (float)A_t;
+        act_data[1] = (float)current_mass;
+
+        // Write 2 floats at once
+        fwrite(act_data, sizeof(float), 2, fp_activity);
         // --- INSERT 2: PRINT PROGRESS ---
         if (t % report_interval == 0)
         {
@@ -307,20 +304,18 @@ double slope_limiter(double *p, int i)
 // drift caclulated using second-order TVD upwind differencing scheme - we are using Lax-Wendroff correction and van Leer flux limiter
 void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, double *v_grid)
 {
-    // PREVIOUS: we only loop until N-2 to avoid out of bouds error if mu is negative and additionally we get zero drift at the boundary
-    // this leads to systematic error in PSD!
-    // CURRENT: TODO need to safeguard against out of bounds access
+
+    // CURRENT: TODO need to safeguard against out of bounds access since we loop to n-1 
     for (int i = 1; i < N - 1; i++)
     {
         // we want the avergae velocity at the interface
         double v_interface = 0.5 * (v_grid[i] + v_grid[i + 1]);
         flux[i] = get_upwind_flux(p, i, v_interface, dt, dx);
     }
-    // PREVIOUS: set N-2 to zero as well, only diffusion can push across the boundary 
-    // CURRENT:
+
     flux[0] = 0.0;
     //flux[N - 2] = 0.0;
-    flux[N - 1] = 0.0;
+    //flux[N - 1] = 0.0;
 
     for (int i = 1; i < N - 1; i++)
     {
