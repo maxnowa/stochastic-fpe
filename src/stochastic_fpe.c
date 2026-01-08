@@ -31,6 +31,8 @@ int main()
     double V_max = 1.0;
     double dx = (V_max - V_min) / N;
     double stability_factor = 2.0;
+    // since we have a constant mu and D, R0 and CV are constant
+    double lambda = PARAM_R0 / PARAM_CV;
     // int correction = 1;
 
     // allocate memory
@@ -68,21 +70,34 @@ int main()
     int report_interval = total_steps / 1000;
     if (report_interval == 0)
         report_interval = 1;
-    int save_interval = 100;
+    int save_interval = 1;
     clock_t start_time = clock();
     double A_accumulator = 0.0;
 
     for (int t = 0; t < steps; t++)
     {
+        double mass_old = 0.0;
+        for(int i=0; i<N; i++) mass_old += p[i];
 
         // Operator splitting approach
-        // Step 1 - Diffusion using crank nicholson
+        // -- Step 1 - Diffusion using crank nicholson --
         diffusion_crank_nicholson(p, N, D, tau, dx, dt, x_rhs, a_diag, b_diag, c_diag, workspace);
 
-        // Step 2 - Drift using 2nd order uwpind differencing
+        // -- Step 2 - Drift using 2nd order uwpind differencing --
         drift(p, p_new, workspace, N, dx, dt, v_grid);
 
-        // Step 3 - Adding probability mass back
+        // there is a 0.04% difference between actual mass loss and J_out calculated analytically if we set p[N-2] to zero as well
+        double mass_remaining = 0.0;
+        for(int i=0; i<N; i++) mass_remaining += p_new[i];
+        double J_mass_lost = (mass_old - mass_remaining) * dx/dt;
+
+        // double J_gradient = (D / tau) * (p_new[N - 2] / dx);
+        // if (t > 100000 && t < 120000) {        
+        //     printf("Step %d: Grad=%.5f vs Mass=%.5f (Diff: %.2f%%)\n", t, J_gradient, J_mass_lost, 100.0 * fabs(J_gradient - J_mass_lost) / J_mass_lost);
+        // }
+
+
+        // -- Step 3 - Adding probability mass back --
         // summing over p to get firing rate (mass)
         double current_mass = 0.0;
         for (int i = 0; i < N; i++)
@@ -91,39 +106,64 @@ int main()
         }
         current_mass *= dx;
 
-        // Normalization approach
-        // double J_out = 1.0 - current_mass;
-
-        // J_out is flux at threshold
-        double J_out = (D / tau) * (p_new[N - 2] / dx);
-
-        // correction term - naive correction as 1/tau
-        // double lambda = 1.0 / tau;
-        // double r_t = J_out + lambda * (1 - current_mass);
-
-        // assuming poisson spike statistics, r(t) = J_out / mass, because lambda = r(t)
         double r_t = 0.0;
-        if (current_mass > 0.0001)
-        {
-            r_t = J_out / current_mass;
+        // J_out is flux at threshold, D/tau * (p_boundary - p_inside)/dx
+        // double J_out = (D / tau) * (p_new[N - 2] / dx);
+
+        // because we changed the boundary handling we need to look at the actual mass that is missing, not the analytical result
+        double J_out = J_mass_lost;
+        switch (PARAM_METHOD) {
+            
+            // APPROACH 1 - Unstable 
+            case 0:
+                r_t = J_out;
+                break;
+
+            // APPROACH 2 - correction term (Tilo)
+            case 1:
+                r_t = J_out + lambda * (1 - current_mass);
+                break;
+
+            // APPROACH 3 - assuming poisson spike statistics, r(t) = J_out / mass, because lambda = r(t)
+            case 2:
+                if (current_mass > 1e-9) {
+                    r_t = J_out / current_mass;
+                } else {
+                    r_t = J_out; // Fallback if mass is empty
+                }
+                break;
+
+            // APPROACH 4 
+            case 3:
+                r_t = J_out + 1.0 - current_mass;
+                break;
+
+            default:
+                printf("Error: Unknown Rate Method %d\n", PARAM_METHOD);
+                exit(1);
         }
+        // only positive rates
+        if (r_t < 0.0) r_t = 0.0;
 
-        // if (r_t < 0) r_t = 0.0;
+        //double J_out = 1.0 - current_mass;
+        // double r_t = 0.0;
+        // if (current_mass > 0.0001) r_t = J_out / current_mass;
+
         double xi_t = randn() / sqrt(dt);
-        // 4. Calculate Stochastic Rate A(t)
+        // -- 4. Calculate Stochastic Rate A(t) --
         double A_t = r_t + sqrt(r_t / N_neurons) * xi_t;
-
         A_accumulator += A_t;
 
-        // resetting
+        // -- resetting --
         int reset_idx = (int)((V_rest - V_min) / dx);
+        // dp/dt = A(t) here because the absorbing boundary takes the mass out of the system
         p_new[reset_idx] += (A_t * dt) / dx;
 
         // swap pointers
         swap_pointers(&p, &p_new);
 
         // record data
-        if (t % 100 == 0)
+        if (t % save_interval == 0)
         {
             for (int i = 0; i < N; i++)
             {
@@ -267,14 +307,19 @@ double slope_limiter(double *p, int i)
 // drift caclulated using second-order TVD upwind differencing scheme - we are using Lax-Wendroff correction and van Leer flux limiter
 void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, double *v_grid)
 {
-    for (int i = 1; i < N - 2; i++)
+    // PREVIOUS: we only loop until N-2 to avoid out of bouds error if mu is negative and additionally we get zero drift at the boundary
+    // this leads to systematic error in PSD!
+    // CURRENT: TODO need to safeguard against out of bounds access
+    for (int i = 1; i < N - 1; i++)
     {
         // we want the avergae velocity at the interface
         double v_interface = 0.5 * (v_grid[i] + v_grid[i + 1]);
         flux[i] = get_upwind_flux(p, i, v_interface, dt, dx);
     }
+    // PREVIOUS: set N-2 to zero as well, only diffusion can push across the boundary 
+    // CURRENT:
     flux[0] = 0.0;
-    flux[N - 2] = 0.0;
+    //flux[N - 2] = 0.0;
     flux[N - 1] = 0.0;
 
     for (int i = 1; i < N - 1; i++)
