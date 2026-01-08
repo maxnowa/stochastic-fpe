@@ -15,5 +15,5 @@ def periodogram(data,dt,df):
      xF=fft(x)
      S=sum(real(xF*xF.conjugate()),axis=0)*dt/(NFFT-1)/ntrials
      psd=S[1:int(NFFT/2)]
-     freq=df*arange(NFFT/2-1)+df
+     freq=df*arange(int(NFFT/2)-1)+df
      return (freq,psd)
