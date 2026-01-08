@@ -86,11 +86,13 @@ def calculate_psd(activity_net, activity_fpe, method="bartlett"):
         fs_fpe = 1.0 / dt_fpe_sec
         fs_net = 1.0 / dt_net_sec
         freq_fpe, psd_fpe = welch(activity_fpe, fs=fs_fpe, nperseg=2048)
-        freq_net, psd_net = welch(activity_net, fs=fs_net, nperseg=2048)
+        if activity_net is not np.nan:
+            freq_net, psd_net = welch(activity_net, fs=fs_net, nperseg=2048)
         
     elif method == "bartlett":
         freq_fpe, psd_fpe = periodogram(activity_fpe, dt_fpe_sec, df=1.0)
-        freq_net, psd_net = periodogram(activity_net, dt_net_sec, df=1.0)
+        if activity_net is not np.nan:
+            freq_net, psd_net = periodogram(activity_net, dt_net_sec, df=1.0)
 
     # Calculate Theoretical White Noise Level (Poisson Limit)
     # 1. Normalize params for dimensionless function
@@ -104,8 +106,9 @@ def calculate_psd(activity_net, activity_fpe, method="bartlett"):
     # --- Plotting ---
     plt.figure(figsize=(10, 6))
     
+    if activity_net is not np.nan:
     # Plot Network (Microscopic)
-    plt.loglog(freq_net, psd_net, color='gray', alpha=0.5, label='Network (Microscopic)')
+        plt.loglog(freq_net, psd_net, color='gray', alpha=0.5, label='Network (Microscopic)')
     
     # Plot FPE (Macroscopic)
     plt.loglog(freq_fpe, psd_fpe, color='red', linestyle='--', linewidth=2, label='FPE Solver (Macroscopic)')
@@ -117,7 +120,7 @@ def calculate_psd(activity_net, activity_fpe, method="bartlett"):
     plt.title(f"PSD Validation Check (N={N}, $\mu$={mu}, D={D})")
     plt.xlabel("Frequency (Hz)")
     plt.ylabel("Power Spectral Density")
-    plt.xlim(1, 1000)
+    #plt.xlim(1, 1000)
     
     plt.legend()
     plt.grid(True, which="both", alpha=0.3)
@@ -131,7 +134,7 @@ def calculate_psd(activity_net, activity_fpe, method="bartlett"):
 
 if __name__ == "__main__":
     # Run
-    activity_net = run_network(N, mu, D, tau, V_th, V_reset, dt_net)
+    activity_net = run_network(N, mu, D, tau, V_th, V_reset, dt_net) if N <= 10000 else np.nan
     
     # Use Bartlett to see noise clearly
     calculate_psd(activity_net, activity_fpe, method="bartlett")

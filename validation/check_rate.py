@@ -43,6 +43,7 @@ def plot_stationary_check(fpe_file="data/activity.bin"):
         V_th = PARAMS["PARAM_V_TH"]
         V_reset = PARAMS["PARAM_V_RESET"]
         T_max = PARAMS["PARAM_T_MAX"] # Needed for time reconstruction
+        N = PARAMS.get("PARAM_N_NEURONS", 500)
     else:
         mu, D, tau = 1.2, 0.01, 10.0
         V_th, V_reset = 1.0, 0.0
@@ -91,16 +92,20 @@ def plot_stationary_check(fpe_file="data/activity.bin"):
     window_bins = int(SMOOTHING_WINDOW_MS / dt_effective)
     rate_smooth = rate_sim 
     time_smooth = time
+    is_smoothed = False
 
-    if window_bins > 1:
-        kernel = np.ones(window_bins) / window_bins
-        rate_smooth = np.convolve(rate_sim, kernel, mode='same')
-        
-        # Remove edge artifacts
-        valid_slice = slice(window_bins, -window_bins)
-        rate_smooth = rate_smooth[valid_slice]
-        time_smooth = time[valid_slice]
-
+    if N <= 10e6:
+        if window_bins > 1:
+            kernel = np.ones(window_bins) / window_bins
+            rate_smooth = np.convolve(rate_sim, kernel, mode='same')
+            
+            # Remove edge artifacts
+            valid_slice = slice(window_bins, -window_bins)
+            rate_smooth = rate_smooth[valid_slice]
+            time_smooth = time[valid_slice]
+            is_smoothed = True
+    else:
+        print(f"Large N detected (N={N:.0e}). Skipping smoothing.")
     # B. Calculate Downsampling Factor
     # Target max 50,000 points to prevent OverflowError
     ds_factor = 10
@@ -115,14 +120,18 @@ def plot_stationary_check(fpe_file="data/activity.bin"):
     plt.rcParams['agg.path.chunksize'] = 10000 # Prevent rendering crash
     
     # Plot Raw (Light Orange, Downsampled)
-    plt.plot(time[::ds_factor], rate_sim[::ds_factor], 
-             label='FPE Simulation (Raw)', 
-             color='tab:orange', linewidth=0.5, alpha=0.3)
+    if is_smoothed:
+        plt.plot(time[::ds_factor], rate_sim[::ds_factor], 
+                 label='FPE Simulation (Raw)', 
+                 color='tab:orange', linewidth=0.5, alpha=0.3)
+        label_main = f'Smoothed ({SMOOTHING_WINDOW_MS}ms, Mean: {rate_sim_mean:.2f} Hz)'
+    else:
+        # If no smoothing, the main plot is just the raw data
+        label_main = f'FPE Rate (Mean: {rate_sim_mean:.2f} Hz)'
     
     # Plot Smoothed (Red, Downsampled)
     plt.plot(time_smooth[::ds_smooth], rate_smooth[::ds_smooth], 
-             label=f'Smoothed ({SMOOTHING_WINDOW_MS}ms, Mean: {rate_sim_mean:.2f} Hz)', 
-             color='#D62728', linewidth=1.5)
+             color='#D62728', linewidth=1.5, label=label_main)
     
     # Plot Exact Theory
     plt.axhline(rate_siegert, color='blue', linestyle='--', linewidth=2, 

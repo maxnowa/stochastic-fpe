@@ -34,7 +34,6 @@ def plot_drift_diffusion():
         # Use float32 because we used 'float' in C
         raw_activity = np.fromfile(ACTIVITY_FILE, dtype=np.float32)
         data_a = raw_activity.reshape(-1, 2)
-        
         # B. Load Density [p0, p1, ... pN] -> Shape: (Snapshots, N)
         raw_density = np.fromfile(DENSITY_FILE, dtype=np.float32)
         data_p = raw_density.reshape(-1, N_GRID)
@@ -131,7 +130,7 @@ def plot_drift_diffusion():
         if len(y_vals) > 0:
             y_min, y_max = np.percentile(y_vals, [1, 99])
             margin = (y_max - y_min) * 0.5
-            ax2.set_ylim(y_min - margin, y_max + margin)
+            #ax2.set_ylim(y_min - margin, y_max + margin)
     else:
         ax2.plot(time_vals, activity_hz_raw, color='red', linewidth=1.0)
 
