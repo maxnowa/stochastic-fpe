@@ -1,53 +1,78 @@
 # Numerical Solution of the Stochastic Fokker-Planck Equation for Finite-Size LIF Networks
 
-This repository contains a C/Python implementation for solving the **Stochastic Fokker-Planck Equation (SFPE)**, modeling the probability density dynamics of finite populations of Leaky Integrate-and-Fire (LIF) neurons.
+This repository contains a C/Python implementation for solving the **Stochastic Fokker-Planck Equation (SFPE)**. It models the probability density dynamics of finite populations of Leaky Integrate-and-Fire (LIF) neurons, capturing finite-size effects that standard mean-field limits ignore.
 
-The project includes a **validation pipeline** that compares the macroscopic SPDE solution against microscopic Monte Carlo network simulations to verify the correct scaling of finite-size fluctuations.
-
+The project includes a robust **validation pipeline** that verifies the solver against analytical theory (Siegert relationship) and microscopic Monte Carlo network simulations.
 
 ## Methodology
 
+The solver implements a **Time-Splitting Finite Volume Method** to integrate the drift-diffusion equation:
+
 ### Macroscopic Solver (C)
-* **Advection (Drift):** Solved using a second-order Upwind Scheme with slope limiters to minimize numerical diffusion.
-* **Diffusion:** Implemented via the Crank-Nicolson method for unconditional stability.
-* **Stochasticity:** Explicit injection of finite-size noise scaled by the instantaneous firing rate and population size ($1/\sqrt{N}$).
+* **Drift (Advection):** Solved using a **Flux-Limited Lax-Wendroff scheme** (Second-Order TVD Upwind).
+    * Uses a **Van Leer slope limiter** to prevent numerical oscillations (Gibbs phenomenon) near sharp gradients (e.g., at the threshold).
+    * Includes the Lax-Wendroff temporal correction for second-order accuracy in time.
+* **Diffusion:** Solved using the **Crank-Nicolson method** (semi-implicit) for unconditional numerical stability.
+* **Stochasticity:** Implements finite-size fluctuations by injecting white noise scaled by the instantaneous population firing rate ($\sqrt{r(t)/N}$).
+* **Boundary Conditions:** Re-injection of probability flux at $V_{reset}$ closes the feedback loop, capturing network resonance.
 
 ### Microscopic Validation (Python)
-* **Ground Truth:** Euler-Maruyama integration of $N$ independent LIF neurons.
-* **Analysis:** Computes the Power Spectral Density (PSD) of the population activity using Welch's method.
-* **Comparison:** Performs Z-score normalization to compare the frequency content of the SPDE against the discrete network simulation.
+The validation suite performs two distinct checks:
+1.  **Stationary Rate Check:** Compares the time-averaged firing rate against the exact analytical solution (**Siegert formula**) to verify drift and diffusion implementations.
+2.  **Fluctuation Check (PSD):** Compares the Power Spectral Density of the population activity against microscopic simulations of $N$ independent LIF neurons to verify finite-size noise scaling ($1/\sqrt{N}$).
+
+## Project Structure
+
+```text
+├── config.py              # Single source of truth for physics/grid parameters
+├── Makefile               # Orchestration for build, simulation, and plotting
+├── src/
+│   ├── stochastic_fpe.c   # Main C solver (Finite Volume / Operator Splitting)
+│   └── params.h           # Auto-generated C header (do not edit manually)
+├── validation/
+│   ├── check_rate.py      # Validation script 1: Mean Rate vs Siegert
+│   └── check_psd.py       # Validation script 2: PSD vs Microscopic sim
+├── analysis/
+│   └── plot_results.py    # General plotting (timesteps, density evolution)
+└── plots/                 # Generated output figures
+```
 
 ## Usage
 
-The project utilizes a `Makefile` to orchestrate parameter generation, compilation, simulation, and validation.
+The project uses a `Makefile` to handle parameter generation, compilation, and execution.
 
 **Prerequisites:**
 * GCC or Clang compiler
 * Python 3.x (`numpy`, `scipy`, `matplotlib`)
 
-**Execution:**
-To run the full pipeline:
+### Standard Execution
+To run the full validation pipeline (Rate Check + PSD Check):
+
 ```bash
-make validate
+make all
 ```
 
-This command performs the following steps:
-1.  Executes `config.py` to generate the `params.h` header.
-2.  Compiles the C simulation.
-3.  Runs the macroscopic SPDE solver.
-4.  Runs the microscopic network simulation.
-5.  Generates a comparative PSD plot in the `plots/` directory.
+### Workflow Details
+The `make validate` command performs the following steps automatically:
+1.  **Configure:** Runs `config.py` to generate `src/params.h`.
+2.  **Compile:** Builds `bin/sfpe_solver` using standard `O3` optimizations.
+3.  **Simulate:** Runs the C solver to generate `data/output.dat`.
+4.  **Verify Rate:** Runs `validation.check_rate` to confirm the mean rate matches theory.
+5.  **Verify PSD:** Runs `validation.check_psd` (unless skipped) to overlay Macroscopic and Microscopic spectra.
 
 ## Configuration
 
-Physics and simulation parameters are defined in **`config.py`**. This ensures consistency between the C and Python implementations.
+Physics and simulation parameters are defined in **`config.py`**. This ensures consistency between the C solver and Python analysis scripts.
 
 ```python
 PARAMS = {
-    "N_NEURONS": 500,       # Network size
-    "T_MAX":     1000.0,    # Duration (ms)
-    "MU":        0.8,       # Mean drift input
-    "D":         0.05,      # Noise intensity
-    "GRID_N":    400        # Spatial grid resolution
+    "PARAM_N_NEURONS": 500,     # neuron number
+    "PARAM_T_MAX":     10000.0, # simulation time (ms)
+    "PARAM_TAU":       10.0,    # membrane time constant (ms)
+    "PARAM_MU":        1.2,     # drift
+    "PARAM_D":         0.01,    # noise strength
+    "PARAM_V_TH":      1.0,     # threshold
+    "PARAM_V_RESET":   0.0,     # reset potential
+    "PARAM_DT_NET":    0.02,    # network time step size
+    "PARAM_GRID_N":    400      # FPE grid
 }
-```

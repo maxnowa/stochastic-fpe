@@ -48,6 +48,18 @@ validate: run_fpe
 	python3 -m validation.check_rate
 	@echo "--- Checking Power Spectrum (N < inf) ---"
 	python3 -m validation.check_psd
+	
+# run just rate check (for N -> inf)
+rate: run_fpe
+	mkdir -p $(PLOT_DIR)
+	@echo "--- Checking Stationary Rate (N -> inf) ---"
+	python3 -m validation.check_rate
+
+# run just psd comparison (N < inf)
+psd: run_fpe
+	mkdir -p $(PLOT_DIR)
+	@echo "--- Checking Power Spectrum (N < inf) ---"
+	python3 -m validation.check_psd
 
 # Cleanup
 clean:
