@@ -32,7 +32,7 @@ $(TARGET_BIN): $(SRC_DIR)/stochastic_fpe.c $(SRC_DIR)/params.h
 # 3. Run FPE Simulation
 run_fpe: $(TARGET_BIN)
 	mkdir -p $(DATA_DIR)
-	./$(TARGET_BIN)
+	caffeinate -i ./$(TARGET_BIN)
 
 # 4. Plot Results
 # Using '-m' allows python to see the root directory (for config imports)
