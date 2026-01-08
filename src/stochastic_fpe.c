@@ -120,8 +120,9 @@ int main()
                 break;
 
             // APPROACH 2 - correction term (Tilo)
+            // we need to use lamda/tau to account for the timescale
             case 1:
-                r_t = J_out + lambda * (1 - current_mass);
+                r_t = J_out + (lambda/tau) * (1 - current_mass);
                 break;
 
             // APPROACH 3 - assuming poisson spike statistics, r(t) = J_out / mass, because lambda = r(t)
