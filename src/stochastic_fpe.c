@@ -250,12 +250,13 @@ double slope_limiter(double *p, int i)
     // we look at the slope of the density at the left and right cell
     double slope_left = p[i] - p[i - 1];
     double slope_right = p[i + 1] - p[i];
-    // go back to first order if the slope is not the same
+    // go back to first order if the slope is not the same (TVD)
     if (slope_left * slope_right <= 0.0)
     {
         return 0.0;
     }
     // return value based on slope
+    // this make it second order in space because we take the shape into account
     else
     {
         double limit = (2 * slope_left * slope_right) / (slope_left + slope_right);
@@ -263,7 +264,7 @@ double slope_limiter(double *p, int i)
     }
 }
 
-// drift caclulated using 2nd order upwind differencing scheme - we are using Lax-Wendroff correction and van Leer flux limiter (TVD scheme)
+// drift caclulated using second-order TVD upwind differencing scheme - we are using Lax-Wendroff correction and van Leer flux limiter
 void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, double *v_grid)
 {
     for (int i = 1; i < N - 2; i++)
@@ -287,7 +288,7 @@ void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, 
 
 double get_upwind_flux(double *p, int i, double v, double dt, double dx)
 {
-    // Lax-Wendroff for temporal correction - we correct for how much of a cell the probability moves in one timestep
+    // Lax-Wendroff for temporal correction - we correct for the fraction of a cell that the probability moves in one timestep
     // this make it second order in time
     double courant = (v * dt) / dx;
     // drift is going from left to right (we only change indexing direction)
