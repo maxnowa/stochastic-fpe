@@ -1,19 +1,26 @@
 # config.py
 import math
+from analysis.lif import cv_benji, rate_whitenoise_benji
+import numpy as np
 
 # --- 1. Define Physics Parameters ---
 # config.py
 PARAMS = {
     "PARAM_N_NEURONS": 500, # neuron number
-    "PARAM_T_MAX":     10000.0, # simulation time (ms)
-    "PARAM_TAU":       10.0, # membrane time constant (ms)
+    "PARAM_T_MAX":     2000.0, # simulation time (ms)
+    "PARAM_TAU":       1, # membrane time constant (ms)
     "PARAM_MU":        1.2, # drift
     "PARAM_D":         0.01, # noise strength
     "PARAM_V_TH":      1.0, # threshold
     "PARAM_V_RESET":   0.0, # reset potential
-    "PARAM_DT_NET":    0.02, # network time step size
-    "PARAM_GRID_N":    400  # FPE grid
+    "PARAM_DT_NET":    0.005, # network time step size
+    "PARAM_GRID_N":    400,  # FPE grid
+    "PARAM_METHOD":    1  # method used for calculating influx of probability
 }
+# calculate the CV and add do dict
+PARAMS["PARAM_CV"] = cv_benji(PARAMS["PARAM_MU"], PARAMS["PARAM_D"])
+PARAMS["PARAM_R0"] = rate_whitenoise_benji(PARAMS["PARAM_MU"], np.sqrt(PARAMS["PARAM_D"]))
+
 
 # --- 2. Generate C Header ---
 def generate_c_header():
