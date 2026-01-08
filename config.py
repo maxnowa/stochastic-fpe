@@ -6,7 +6,7 @@ import numpy as np
 # --- 1. Define Physics Parameters ---
 # config.py
 PARAMS = {
-    "PARAM_N_NEURONS": 500, # neuron number
+    "PARAM_N_NEURONS": 200, # neuron number
     "PARAM_T_MAX":     2000.0, # simulation time (ms)
     "PARAM_TAU":       1, # membrane time constant (ms)
     "PARAM_MU":        1.2, # drift

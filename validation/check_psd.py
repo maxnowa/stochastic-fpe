@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from scipy.signal import welch
 import os
 import sys
-from analysis.utils import periodogram 
+from analysis.utils import periodogram, log_smooth
 from analysis.lif import rate_whitenoise_benji # Import for Theoretical Level
 
 try:
@@ -29,17 +29,18 @@ if not os.path.exists(fpe_file):
     print(f"Error: {fpe_file} not found. Run the solver first.")
     sys.exit(1)
 
-# Read raw float32 data
-raw_data = np.fromfile(fpe_file, dtype=np.float32)
+raw_data = np.memmap(fpe_file, dtype=np.float32, mode='r')
 # Reshape: [Rate, Mass] (2 columns)
 data_fpe = raw_data.reshape(-1, 2)
 
 # Reconstruct Time Axis
 # (Binary file doesn't store time, so we generate it)
-time_fpe = np.linspace(0, T_max, len(data_fpe))
+time_fpe = np.linspace(0, T_max, data_fpe.shape[0])
 
 # Extract Rate and Convert kHz -> Hz
 # Col 0 is Rate (in 1/ms), Col 1 is Mass
+# WARNING: This specific line creates a copy in RAM. 
+# If you have 25GB total, this column is ~12.5GB. 
 activity_fpe = data_fpe[:, 0] * 1000.0 
 
 dt_fpe = time_fpe[1] - time_fpe[0]
@@ -93,7 +94,10 @@ def calculate_psd(activity_net, activity_fpe, method="bartlett"):
         freq_fpe, psd_fpe = periodogram(activity_fpe, dt_fpe_sec, df=1.0)
         if activity_net is not np.nan:
             freq_net, psd_net = periodogram(activity_net, dt_net_sec, df=1.0)
-
+    
+    # apply smoothing
+    freq_fpe, psd_fpe = log_smooth(freq_fpe, psd_fpe, bins_per_decade=25)
+    freq_net, psd_net = log_smooth(freq_net, psd_net, bins_per_decade=25)
     # Calculate Theoretical White Noise Level (Poisson Limit)
     # 1. Normalize params for dimensionless function
     mu_dim = (mu - V_reset) / (V_th - V_reset)
@@ -120,7 +124,7 @@ def calculate_psd(activity_net, activity_fpe, method="bartlett"):
     plt.title(f"PSD Validation Check (N={N}, $\mu$={mu}, D={D})")
     plt.xlabel("Frequency (Hz)")
     plt.ylabel("Power Spectral Density")
-    #plt.xlim(1, 1000)
+    plt.xlim(1, 1e4)
     
     plt.legend()
     plt.grid(True, which="both", alpha=0.3)

@@ -31,11 +31,13 @@ def plot_drift_diffusion():
     
     try:
         # A. Load Activity [A_t, mass] -> Shape: (Steps, 2)
-        # Use float32 because we used 'float' in C
-        raw_activity = np.fromfile(ACTIVITY_FILE, dtype=np.float32)
+        # Use memmap for instant, lazy loading
+        raw_activity = np.memmap(ACTIVITY_FILE, dtype=np.float32, mode='r')
         data_a = raw_activity.reshape(-1, 2)
+        
         # B. Load Density [p0, p1, ... pN] -> Shape: (Snapshots, N)
-        raw_density = np.fromfile(DENSITY_FILE, dtype=np.float32)
+        # Use memmap for instant, lazy loading
+        raw_density = np.memmap(DENSITY_FILE, dtype=np.float32, mode='r')
         data_p = raw_density.reshape(-1, N_GRID)
         
     except FileNotFoundError:
@@ -46,21 +48,26 @@ def plot_drift_diffusion():
         print(f"Check if N_GRID in config.py ({N_GRID}) matches the C simulation.")
         return
 
-    # --- 2. Reconstruct Time Axes ---
-    # We calculate the effective dt based on the file size to be robust
-    # (in case you saved every 100 steps or every 1 step)
+    # --- 2. Setup Lazy Access ---
+    num_activity_steps = data_a.shape[0]
+    dt_activity = T_MAX / num_activity_steps
     
-    num_activity_steps = len(data_a)
-    dt_activity = T_MAX / num_activity_steps  # Effective dt for activity plot
-    time_vals = np.linspace(0, T_MAX, num_activity_steps)
-    
-    # Extract columns
-    # Activity was saved as [Rate_Hz, Mass] (or similar) in your C code
-    # Assuming column 0 is A(t) and column 1 is Mass
-    activity_hz_raw = data_a[:, 0] * 1000.0  # Convert if C saved kHz, otherwise check units
-    mass_vals = data_a[:, 1]
+    # Extract Views (No RAM usage yet)
+    activity_view = data_a[:, 0]
+    mass_view = data_a[:, 1]
 
-    # --- 3. Setup Figure ---
+    # --- 3. Downsampling Setup ---
+    target_points = 100_000
+    step = max(1, num_activity_steps // target_points)
+    
+    print(f"Plotting Activity: Downsampling by factor of {step} (Total points: {num_activity_steps} -> {num_activity_steps//step})")
+
+    # Generate Time Axis ONLY for the points we plot (Tiny array)
+    # We slice the activity view first to get the exact length
+    activity_hz_plot = activity_view[::step] * 1000.0
+    time_plot = np.linspace(0, T_MAX, len(activity_hz_plot))
+
+    # --- 4. Setup Figure ---
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 12), 
                                         gridspec_kw={'height_ratios': [2, 1.5, 1]})
     
@@ -68,16 +75,13 @@ def plot_drift_diffusion():
     # Subplot 1: Probability Density Evolution P(v,t)
     # =========================================================
     total_snapshots = data_p.shape[0]
-    
-    # Pick 6 evenly spaced snapshots to plot
     indices_to_plot = np.linspace(0, total_snapshots - 1, 6, dtype=int)
     colors = cm.viridis(np.linspace(0, 1, len(indices_to_plot)))
     max_p_height = 0
     
     for i, idx in enumerate(indices_to_plot):
-        # Calculate time for this snapshot
         t_snapshot = idx * (T_MAX / total_snapshots)
-        
+        # Reading single rows from memmap is fast
         ax1.plot(data_p[idx], color=colors[i], linewidth=2, label=f"t={t_snapshot:.0f} ms")
         max_p_height = max(max_p_height, np.max(data_p[idx]))
 
@@ -85,9 +89,6 @@ def plot_drift_diffusion():
     ax1.set_ylabel("Density P(v)")
     ax1.set_xlabel("Grid Index (Voltage proxy)")
     
-    # Draw reference lines for Rest/Threshold
-    # Assuming grid 0 to N. Reset is typically V_reset (mapped to index)
-    # We'll plot vertical lines at boundaries
     ax1.axvline(0, color='red', linestyle=':', alpha=0.5, label='Min Voltage')
     ax1.axvline(N_GRID-1, color='red', linestyle='--', alpha=0.5, label='Threshold')
     
@@ -98,44 +99,42 @@ def plot_drift_diffusion():
     # =========================================================
     # Subplot 2: Population Activity A(t)
     # =========================================================
-    # DOWNSAMPLE for plotting speed (e.g., plot every 10th point)
-    # This keeps the visual "noise" but fixes the memory/overflow error
-    ds_factor = 10 
-    if len(time_vals) > 100000:
-        ds_factor = int(len(time_vals) / 50000)
     
     # Plot Raw (Downsampled)
-    ax2.plot(time_vals[::ds_factor], activity_hz_raw[::ds_factor], 
+    ax2.plot(time_plot, activity_hz_plot, 
              color='tab:orange', alpha=0.3, linewidth=0.5, label="Raw Output")
-    # # Plot Raw
-    # ax2.plot(time_vals, activity_hz_raw, color='tab:orange', alpha=0.3, 
-    #          linewidth=0.5, label="Raw Output")
     
-    # Smoothing
-    # Calculate window size in bins based on effective dt
-    window_bins = int(SMOOTHING_WINDOW_MS / dt_activity)
+    # Smoothing Logic (FAST VERSION)
+    # We smooth the *downsampled* data (25k points), not the raw data (3B points).
+    # This is instantaneous.
     
-    if window_bins > 1:
-        kernel = np.ones(window_bins) / window_bins
-        activity_smooth = np.convolve(activity_hz_raw, kernel, mode='same')
-        # Trim edges
-        valid_slice = slice(window_bins, -window_bins)
+    # 1. Calculate how many bins the window represents in the full data
+    raw_window_bins = int(SMOOTHING_WINDOW_MS / dt_activity)
+    
+    # 2. Scale that window down to our downsampled grid
+    # e.g., if we skipped 100 points, the window is 100x smaller in indices
+    ds_window = max(1, int(raw_window_bins / step))
+    
+    if ds_window > 1:
+        kernel = np.ones(ds_window) / ds_window
         
-        ax2.plot(time_vals[valid_slice], activity_smooth[valid_slice], 
-                 color='#D62728', linewidth=1.5, 
-                 label=f"Smoothed ({SMOOTHING_WINDOW_MS}ms)")
+        # Convolve only the small plotting array (Fast!)
+        smoothed_plot = np.convolve(activity_hz_plot, kernel, mode='same')
         
-        # Robust Y-limits
-        y_vals = activity_smooth[valid_slice]
-        if len(y_vals) > 0:
-            y_min, y_max = np.percentile(y_vals, [1, 99])
-            margin = (y_max - y_min) * 0.5
-            #ax2.set_ylim(y_min - margin, y_max + margin)
+        # Trim valid region to avoid edge artifacts
+        valid_slice = slice(ds_window, -ds_window)
+        
+        if len(smoothed_plot[valid_slice]) > 0:
+            ax2.plot(time_plot[valid_slice], smoothed_plot[valid_slice], 
+                     color='#D62728', linewidth=1.5, 
+                     label=f"Smoothed ({SMOOTHING_WINDOW_MS}ms)")
     else:
-        ax2.plot(time_vals, activity_hz_raw, color='red', linewidth=1.0)
+        # If window is smaller than 1 pixel, just plot the line
+        ax2.plot(time_plot, activity_hz_plot, 
+                 color='#D62728', linewidth=1.5, label="Smoothed (Window < 1px)")
 
-    # Mean Line
-    mean_val = np.mean(activity_hz_raw[int(len(activity_hz_raw)*0.1):]) # Ignore first 10%
+    # Mean Line (Estimated from downsampled data)
+    mean_val = np.mean(activity_hz_plot) 
     ax2.axhline(mean_val, color='blue', linestyle='--', linewidth=1.5, 
                 label=f"Mean: {mean_val:.2f} Hz")
 
@@ -148,7 +147,10 @@ def plot_drift_diffusion():
     # =========================================================
     # Subplot 3: Mass Conservation
     # =========================================================
-    ax3.plot(time_vals, mass_vals, color='tab:green', linewidth=1.5)
+    # Apply same downsampling
+    mass_plot = mass_view[::step]
+    
+    ax3.plot(time_plot, mass_plot, color='tab:green', linewidth=1.5)
     ax3.set_title("3. Mass Conservation")
     ax3.set_ylabel("Total Mass")
     ax3.set_xlabel("Time (ms)")
