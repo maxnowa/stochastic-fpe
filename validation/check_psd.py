@@ -80,7 +80,7 @@ def run_network(N, mu, D, tau, V_th, V_reset, dt_net):
 def calculate_psd(activity_net, activity_fpe, method="bartlett"):
     print(f"\nComputing Spectra using {method} method...")
     
-    df = 1.0/T_max
+
     dt_net_sec = dt_net / 1000.0
     dt_fpe_sec = dt_fpe / 1000.0
     
@@ -92,9 +92,9 @@ def calculate_psd(activity_net, activity_fpe, method="bartlett"):
             freq_net, psd_net = welch(activity_net, fs=fs_net, nperseg=2048)
         
     elif method == "bartlett":
-        freq_fpe, psd_fpe = periodogram(activity_fpe, dt_fpe_sec, df=0.1)
+        freq_fpe, psd_fpe = periodogram(activity_fpe, dt_fpe_sec, df=1)
         if activity_net is not np.nan:
-            freq_net, psd_net = periodogram(activity_net, dt_net_sec, df=0.1)
+            freq_net, psd_net = periodogram(activity_net, dt_net_sec, df=1)
     
     # apply smoothing
     freq_fpe, psd_fpe = log_smooth(freq_fpe, psd_fpe, bins_per_decade=20)

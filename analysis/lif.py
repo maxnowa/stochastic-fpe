@@ -44,7 +44,9 @@ def rate_whitenoise_benji2(Vrest, tau, D, Vth, Vreset):
 def cv_benji(mu, D):
 
     def Psi2(x):
+        # exp(x^2)erfc(x)
         return erfcx(x)
+    # calculate MFPT
     a1 = (mu - 1) / sqrt(2 * D)
     a2 = mu / sqrt(2 * D)
     T, _ = quad(Psi2, a1, a2)
@@ -57,6 +59,8 @@ def cv_benji(mu, D):
         z, _ = quad(psi4, a1, x)
         return z
     def outer(x):
+        #exp(-x^2)*(erfcx(x))^2 = exp(-x^2)*exp(2x^2)*erfc(x)^2 = exp(x^2)*erfc(x)^2
+        # used for numerical stability
         return 2 * pi * exp(-x**2) * (erfcx(x)**2) * psi3(x)
     B, _ = quad(outer, a1, 100) # Integrate to infinity (approx 100)
     return sqrt(B) / T
