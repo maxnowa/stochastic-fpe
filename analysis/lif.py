@@ -1,5 +1,5 @@
 from numpy import *
-from scipy.special import erfc, erf, erfcx
+from scipy.special import erfc, erf, erfcx, dawsn
 from scipy.integrate import quad, dblquad
 from scipy.optimize import newton
 
@@ -41,28 +41,53 @@ def rate_whitenoise_benji2(Vrest, tau, D, Vth, Vreset):
     T = T * sqrt(pi)
     return 1.0 / (T * tau)
 
-def cv_benji(mu, D):
+# def cv_benji(mu, D):
 
+#     def Psi2(x):
+#         # exp(x^2)erfc(x)
+#         return erfcx(x)
+#     # calculate MFPT
+#     a1 = (mu - 1) / sqrt(2 * D)
+#     a2 = mu / sqrt(2 * D)
+#     T, _ = quad(Psi2, a1, a2)
+#     T *= sqrt(pi)
+
+#     def psi4(y):
+#         if y > a2: return 0.0
+#         return exp(y**2)
+#     def psi3(x):
+#         z, _ = quad(psi4, a1, x)
+#         return z
+#     def outer(x):
+#         #exp(-x^2)*(erfcx(x))^2 = exp(-x^2)*exp(2x^2)*erfc(x)^2 = exp(x^2)*erfc(x)^2
+#         # used for numerical stability
+#         return 2 * pi * exp(-x**2) * (erfcx(x)**2) * psi3(x)
+#     B, _ = quad(outer, a1, 100) # Integrate to infinity (approx 100)
+#     return sqrt(B) / T
+
+def cv_benji(mu, D):
+    # 1. Calculate Mean First Passage Time (T)
+    # Using erfcx is safe here.
     def Psi2(x):
-        # exp(x^2)erfc(x)
         return erfcx(x)
-    # calculate MFPT
+    
     a1 = (mu - 1) / sqrt(2 * D)
     a2 = mu / sqrt(2 * D)
     T, _ = quad(Psi2, a1, a2)
     T *= sqrt(pi)
 
-    def psi4(y):
-        if y > a2: return 0.0
-        return exp(y**2)
-    def psi3(x):
-        z, _ = quad(psi4, a1, x)
-        return z
+    # 2. Calculate Variance Term (B)
+    # We merge exp(-x^2) from 'outer' with exp(upper^2) from 'psi3'
     def outer(x):
-        #exp(-x^2)*(erfcx(x))^2 = exp(-x^2)*exp(2x^2)*erfc(x)^2 = exp(x^2)*erfc(x)^2
-        # used for numerical stability
-        return 2 * pi * exp(-x**2) * (erfcx(x)**2) * psi3(x)
-    B, _ = quad(outer, a1, 100) # Integrate to infinity (approx 100)
+        # Determine the upper limit of the inner integral
+        upper = x if x < a2 else a2
+        # Term 1: exp(upper^2) * dawson(upper) * exp(-x^2) becomes: exp(upper^2 - x^2) * dawson(upper)
+        term1 = exp(upper**2 - x**2) * dawsn(upper)
+        # Term 2: exp(a1^2) * dawson(a1) * exp(-x^2) becomes: exp(a1^2 - x^2) * dawson(a1)
+        term2 = exp(a1**2 - x**2) * dawsn(a1)
+        return 2 * pi * (erfcx(x)**2) * (term1 - term2)
+    # Integrate to a sufficient upper bound (100 is usually enough for convergence)
+    B, _ = quad(outer, a1, 100)
     return sqrt(B) / T
 
 # def cv_benji(mu,sigma_x):
