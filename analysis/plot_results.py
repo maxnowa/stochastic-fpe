@@ -149,13 +149,15 @@ def plot_drift_diffusion():
     # =========================================================
     # Apply same downsampling
     mass_plot = mass_view[::step]
-    
+    mass_mean = np.mean(mass_plot)
     ax3.plot(time_plot, mass_plot, color='tab:green', linewidth=1.5)
+    ax3.axhline(mass_mean, color='blue', linestyle='--', linewidth=1.5, 
+                label=f"Mean: {mass_mean:.5f}")
     ax3.set_title("3. Mass Conservation")
     ax3.set_ylabel("Total Mass")
     ax3.set_xlabel("Time (ms)")
     ax3.axhline(1.0, color='red', linestyle='--', linewidth=1)
-    
+    ax3.legend(loc='upper right', fontsize='small')
     ax3.set_xlim(0, T_MAX)
     ax3.grid(True, alpha=0.3)
 

@@ -171,7 +171,6 @@ def plot_stationary_check(fpe_file="data/activity.bin"):
     print(f"  Exact (Siegert):  {rate_siegert:.2f} Hz")
     print(f"  Approx (Lindner): {rate_lindner:.2f} Hz")
     print(f"  Sim Mean:         {rate_sim_mean:.2f} Hz")
-    plt.show()
 
 if __name__ == "__main__":
     plot_stationary_check()

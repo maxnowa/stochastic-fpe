@@ -3,24 +3,23 @@ import matplotlib.pyplot as plt
 from scipy.signal import welch
 import os
 import sys
-from analysis.utils import periodogram, log_smooth
-from analysis.lif import rate_whitenoise_benji # Import for Theoretical Level
 
-try:
-    from config import PARAMS
-except ImportError:
-    print("Error: config.py not found.")
-    sys.exit(1)
+from analysis.utils import periodogram, log_smooth
+from analysis.lif import rate_whitenoise_benji 
+from config import PARAMS
+from analysis.lif_susceptibility_psd import get_theoretical_curve
 
 # Load parameters
-N = PARAMS["PARAM_N_NEURONS"]
+N_neurons = PARAMS["PARAM_N_NEURONS"]
 mu = PARAMS["PARAM_MU"]
 D = PARAMS["PARAM_D"]
 tau = PARAMS["PARAM_TAU"]
 V_th = PARAMS["PARAM_V_TH"]
 V_reset = PARAMS["PARAM_V_RESET"]
 dt_net = PARAMS["PARAM_DT_NET"] 
-T_max = PARAMS["PARAM_T_MAX"]   # Needed to reconstruct time axis
+T_max = PARAMS["PARAM_T_MAX"]
+CV = PARAMS["PARAM_CV"]
+R0 = PARAMS["PARAM_R0"]   
 
 fpe_file = "data/activity.bin"
 
@@ -30,19 +29,11 @@ if not os.path.exists(fpe_file):
     sys.exit(1)
 
 raw_data = np.memmap(fpe_file, dtype=np.float32, mode='r')
-# Reshape: [Rate, Mass] (2 columns)
 data_fpe = raw_data.reshape(-1, 2)
 
 # Reconstruct Time Axis
-# (Binary file doesn't store time, so we generate it)
 time_fpe = np.linspace(0, T_max, data_fpe.shape[0])
-
-# Extract Rate and Convert kHz -> Hz
-# Col 0 is Rate (in 1/ms), Col 1 is Mass
-# WARNING: This specific line creates a copy in RAM. 
-# If you have 25GB total, this column is ~12.5GB. 
 activity_fpe = data_fpe[:, 0] * 1000.0 
-
 dt_fpe = time_fpe[1] - time_fpe[0]
 print(f"FPE Data Loaded: T={time_fpe[-1]}ms, dt_save={dt_fpe:.3f}ms")
 
@@ -53,34 +44,35 @@ def run_network(N, mu, D, tau, V_th, V_reset, dt_net):
     T_sim = time_fpe[-1]
     steps = int(T_sim / dt_net)
     
+    # 1. Pre-allocate Array (float32 saves 50% RAM vs standard float)
+    activity_net = np.zeros(steps, dtype=np.float32)
+    
+    # 2. Report Memory Usage
+    mem_mb = activity_net.nbytes / (1024 ** 2)
+    print(f"   Steps: {steps:,} | Memory Allocated: {mem_mb:.2f} MB")
+    
     v = np.zeros(int(N))
-    activity_net = []
     
     diffusion_coeff = np.sqrt(2 * D / tau)
     drift_factor = dt_net / tau
     noise_factor = diffusion_coeff * np.sqrt(dt_net)
 
-    for _ in range(steps):
+    # 3. Use index 'i' to fill the pre-allocated array
+    for i in range(steps):
         noise = np.random.normal(0, 1, int(N))
-        
-        # Euler-Maruyama
         v += ((mu - v) * drift_factor) + (noise * noise_factor)
-        
-        # Spiking
         spikes = v >= V_th
         v[spikes] = V_reset
         
-        # Rate in Hz
         rate_hz = np.sum(spikes) / (N * (dt_net / 1000.0))
-        activity_net.append(rate_hz)
+        activity_net[i] = rate_hz
         
-    return np.array(activity_net)
+    return activity_net
 
 # --- 3. PSD Calculation ---
 def calculate_psd(activity_net, activity_fpe, method="bartlett"):
     print(f"\nComputing Spectra using {method} method...")
     
-
     dt_net_sec = dt_net / 1000.0
     dt_fpe_sec = dt_fpe / 1000.0
     
@@ -100,33 +92,37 @@ def calculate_psd(activity_net, activity_fpe, method="bartlett"):
     freq_fpe, psd_fpe = log_smooth(freq_fpe, psd_fpe, bins_per_decade=20)
     if activity_net is not np.nan:
         freq_net, psd_net = log_smooth(freq_net, psd_net, bins_per_decade=20)
+        
     # Calculate Theoretical White Noise Level (Poisson Limit)
-    # 1. Normalize params for dimensionless function
     mu_dim = (mu - V_reset) / (V_th - V_reset)
     sigma_dim = np.sqrt(D) / (V_th - V_reset)
-    # 2. Get Rate (Hz)
     rate_exact_hz = rate_whitenoise_benji(mu_dim, sigma_dim) * (1000.0 / tau)
-    # 3. Get PSD Level (Rate / N)
-    psd_theory_level = rate_exact_hz / N
+    psd_theory_level = rate_exact_hz / N_neurons
+    low_freq_limit = rate_exact_hz*(CV**2)/N_neurons
+
+    # Calculate Full Theoretical Curve
+    # Use FPE frequencies as the axis
+    mask = (freq_fpe > 0.5) & (freq_fpe < 2500)
+    theory_freqs = freq_fpe[mask]
+    theory_curve = get_theoretical_curve(theory_freqs, mu, D, tau, V_th, V_reset, rate_exact_hz, N_neurons)
 
     # --- Plotting ---
     plt.figure(figsize=(10, 6))
     
     if activity_net is not np.nan:
-    # Plot Network (Microscopic)
-        plt.loglog(freq_net, psd_net, color='gray', alpha=0.5, label='Network (Microscopic)')
+        plt.loglog(freq_net, psd_net, color='gray', alpha=0.5, label='Microscopic')
     
-    # Plot FPE (Macroscopic)
-    plt.loglog(freq_fpe, psd_fpe, color='red', linestyle='--', linewidth=2, label='FPE Solver (Macroscopic)')
+    plt.loglog(freq_fpe, psd_fpe, color='red', linestyle='--', linewidth=2, label='FPE Solver (Mesoscopic)')
 
-    # Plot Theoretical Poisson Limit
-    plt.axhline(psd_theory_level, color='green', linestyle=':', linewidth=2, 
-                label=f'Theory Limit (Rate/N): {psd_theory_level:.4f}')
+    plt.loglog(theory_freqs, theory_curve, color='black', linewidth=1.5, label='Exact')
+
+    plt.axhline(psd_theory_level, color='green', linestyle=':', linewidth=2, label=f'Poisson')
+    plt.axhline(low_freq_limit, color='blue', linestyle=':', linewidth=2, label=f'Low frequency limit')
     
-    plt.title(fr"PSD Validation Check (N={N}, $\mu$={mu}, D={D}, $\tau$={tau})")
+    plt.title(fr"PSD Validation Check (N={N_neurons}, $\mu$={mu}, D={D}, $\tau$={tau})")
     plt.xlabel("Frequency (Hz)")
     plt.ylabel("Power Spectral Density")
-    #plt.xlim(0.1, 1e4)
+    plt.xlim(1, 10000)
     
     plt.legend()
     plt.grid(True, which="both", alpha=0.3)
@@ -136,11 +132,11 @@ def calculate_psd(activity_net, activity_fpe, method="bartlett"):
     plt.savefig("plots/validation_psd.png", dpi=150)
     print(f"Theory Level: {psd_theory_level:.5f}")
     print("\n✓ Validation Plot saved to plots/validation_psd.png")
-    plt.show()
+    # plt.show()
 
 if __name__ == "__main__":
     # Run
-    activity_net = run_network(N, mu, D, tau, V_th, V_reset, dt_net) if N <= 10000 else np.nan
+    activity_net = run_network(N_neurons, mu, D, tau, V_th, V_reset, dt_net) if N_neurons <= 10000 else np.nan
     
     # Use Bartlett to see noise clearly
     calculate_psd(activity_net, activity_fpe, method="bartlett")
