@@ -14,17 +14,34 @@ VALIDATION_DIR = validation
 # Output Binary
 TARGET_BIN = $(BIN_DIR)/sfpe_solver
 
+# --- Argument Parsing for config.py ---
+# Define a variable to hold python flags
+# Usage: make run_fpe METHOD=0 MU=1.5
+PY_FLAGS = 
+
+ifdef MU
+    PY_FLAGS += --PARAM_MU $(MU)
+endif
+ifdef D
+    PY_FLAGS += --PARAM_D $(D)
+endif
+ifdef METHOD
+    PY_FLAGS += --PARAM_METHOD $(METHOD)
+endif
+ifdef T_MAX
+    PY_FLAGS += --PARAM_T_MAX $(T_MAX)
+endif
+
 # Default Target
 all: clean plot validate
 
 # 1. Generate Parameters
-# Logic: Run config.py. If it generates params.h in root, move it to src/
+# Logic: Run config.py. If it generates params.h in root, move to src/
 $(SRC_DIR)/params.h: config.py
-	python3 config.py
+	python3 config.py $(PY_FLAGS)
 	@[ -f params.h ] && mv params.h $(SRC_DIR)/params.h || true
 
 # 2. Compile C Code
-# Links both stochastic_fpe.c and nrutil.c
 $(TARGET_BIN): $(SRC_DIR)/stochastic_fpe.c $(SRC_DIR)/params.h
 	mkdir -p $(BIN_DIR)
 	$(CC) $(SRC_DIR)/stochastic_fpe.c -o $(TARGET_BIN) $(CFLAGS)
@@ -48,7 +65,7 @@ validate: run_fpe
 	python3 -m validation.check_rate
 	@echo "--- Checking Power Spectrum (N < inf) ---"
 	python3 -m validation.check_psd
-	
+    
 # run just rate check (for N -> inf)
 rate: run_fpe
 	mkdir -p $(PLOT_DIR)
@@ -60,6 +77,13 @@ psd: run_fpe
 	mkdir -p $(PLOT_DIR)
 	@echo "--- Checking Power Spectrum (N < inf) ---"
 	python3 -m validation.check_psd
+
+# Check neural mass evolution
+mass: clean run_fpe
+	mkdir -p $(PLOT_DIR)
+	@echo "--- Checking Neural Mass (T -> inf) ---"
+	python3 -m validation.check_neural_mass
+
 
 # Cleanup
 clean:
