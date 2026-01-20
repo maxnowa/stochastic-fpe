@@ -13,7 +13,7 @@ double slope_limiter(double *p, int i);
 void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, double *v_grid, double v_exit);
 double set_dt(double *v_grid, int N, double sf, double dx, double D);
 double get_upwind_flux(double *p, int i, double v, double dt, double dx, int N);
-
+void update_v_grid(double *v_grid, int N, double dx, double V_min, double mu, double tau);
 
 // Generates standard normal random number N(0,1)
 double randn()
@@ -25,18 +25,25 @@ double randn()
 
 int main()
 {
-    //seed_rng((uint64_t)time(NULL));
+    // seed_rng((uint64_t)time(NULL));
+
     // Sim parameters
+    // for recurrent connections
+    int recurrence_mode = PARAM_RECURRENCE;
+    int delay = PARAM_DELAY;
+
     int N = PARAM_GRID_N;
     double D = PARAM_D;
     double T = PARAM_T_MAX;
     double V_min = -0.6;
     double V_max = 1.0;
     double dx = (V_max - V_min) / N;
-    double stability_factor = 5.0;
+    double stability_factor = 4.0;
     // since we have a constant mu and D, R0 and CV are constant
     double lambda = PARAM_R0 / PARAM_CV;
-    // int correction = 1;
+    // UNSAFE initial value
+    double dt = 1e-5;
+    double w = PARAM_W;
 
     // allocate memory
     double *p = (double *)malloc(N * sizeof(double));
@@ -54,13 +61,47 @@ int main()
     double mu = PARAM_MU;
     double tau = PARAM_TAU;
     double N_neurons = (double)PARAM_N_NEURONS;
+    // FIX only for non recurrence
     double v_exit = (mu - V_th) / tau;
+
     // initialize the grid
     initialize_system(p, v_grid, N, dx, V_min, mu, tau);
+
+    if (recurrence_mode == 0)
+    {
+        dt = set_dt(v_grid, N, stability_factor, dx, D);
+    }
+    else
+    {
+        double max_anticipated_rate = (w > 0) ? 1000.0 : 150.0;
+        double mu_extreme = mu + (w * max_anticipated_rate);
+        
+        double v_speed_base = fmax(fabs((mu - V_min)/tau), fabs((mu - V_max)/tau));
+        double v_speed_extreme = fmax(fabs((mu_extreme - V_min)/tau), fabs((mu_extreme - V_max)/tau));
+
+        double v_max_worst = fmax(v_speed_base, v_speed_extreme);
+
+        if (v_max_worst == 0)
+        {
+            dt = 0.1 * (dx * dx) / (2.0 * D);
+        }
+        else
+        {
+            dt = (1.0 * dx) / (v_max_worst);
+        }
+    }
+    int buffer_size = (int)(delay / dt);
+    // this stores the past rates
+    double *past_rate = (double *)calloc((buffer_size + 1), sizeof(double));
+    double initial_rate = 0.0;
+    for (int i = 0; i < buffer_size; i++)
+    {
+        past_rate[i] = initial_rate;
+    }
+    int write_idx = 0;
+
     system("mkdir -p data");
 
-    // set dt dynamically
-    double dt = set_dt(v_grid, N, stability_factor, dx, D);
     int steps = (int)(T / dt);
     printf("Dynamic step size of %g determined\n", dt);
     printf("Allocating grid of size %d. Steps: %d\n", N, steps);
@@ -80,8 +121,42 @@ int main()
 
     for (int t = 0; t < steps; t++)
     {
+        double A_t_delayed = past_rate[write_idx];
+        // update v_grid
+        double mu_eff = mu; 
+        if (recurrence_mode == 1) {
+            mu_eff += (w * A_t_delayed);
+        }
+        update_v_grid(v_grid, N, dx, V_min, mu_eff, tau);
+        v_exit = (mu_eff - V_th) / tau;
+
+        // --- INSERT START: Runtime CFL Safety Check ---
+        double current_max_v = 0.0;
+        for (int i = 0; i < N; i++) {
+            if (fabs(v_grid[i]) > current_max_v) {
+                current_max_v = fabs(v_grid[i]);
+            }
+        }
+        
+        // Check also the exit velocity as it might be the highest
+        if (fabs(v_exit) > current_max_v) {
+             current_max_v = fabs(v_exit);
+        }
+
+        // CFL Condition: (v * dt) / dx must be <= 1.0 (ideally <= 0.8 for safety)
+        if ((current_max_v * dt) / dx > 1.0) {
+            printf("\nCRITICAL ERROR at Step %d (t=%.4fs):\n", t, t*dt);
+            printf("  Stability violation detected!\n");
+            printf("  Max Velocity: %.2f mV/ms\n", current_max_v);
+            printf("  Required dt: < %.2e s\n", dx / current_max_v);
+            printf("  Current dt:  %.2e s\n", dt);
+            printf("  Simulation stopped to prevent numerical explosion.\n");
+            break; // Breaks out of the time loop
+        }
+
         double mass_old = 0.0;
-        for(int i=0; i<N; i++) mass_old += p[i];
+        for (int i = 0; i < N; i++)
+            mass_old += p[i];
 
         // Operator splitting approach
         // -- Step 1 - Diffusion using crank nicholson --
@@ -89,105 +164,86 @@ int main()
 
         // we measure the diffusion rate directly
         double mass_diff = 0.0;
-        for (int i=0; i<N; i++) mass_diff += p[i];
-        double J_diff = (mass_old - mass_diff) * (dx/dt);
+        for (int i = 0; i < N; i++)
+            mass_diff += p[i];
+        double J_diff = (mass_old - mass_diff) * (dx / dt);
 
         // -- Step 2 - Drift using 2nd order uwpind differencing --
         drift(p, p_new, workspace, N, dx, dt, v_grid, v_exit);
 
         // measure all mass that was lost
         double mass_remaining = 0.0;
-        for(int i=0; i<N; i++) mass_remaining += p_new[i];
-        double J_mass_lost = (mass_old - mass_remaining) * dx/dt;
+        for (int i = 0; i < N; i++)
+            mass_remaining += p_new[i];
+        double J_mass_lost = (mass_old - mass_remaining) * dx / dt;
 
         // -- Step 3 - Adding probability mass back --
         // summing over p to get firing rate (mass)
-        // double current_mass = 0.0;
-        // for (int i = 0; i < N; i++)
-        // {
-        //     current_mass += p_new[i];
-        // }
-        double current_mass = J_mass_lost * dt;
+        double current_mass = 0.0;
+        for (int i = 0; i < N; i++)
+        {
+            current_mass += p_new[i];
+        }
+        current_mass *= dx;
 
         // Calculate outflux
         double J_out = 0.0;
-        switch (PARAM_FLUX_METHOD) {
+        switch (PARAM_FLUX_METHOD)
+        {
 
-            case 0: {
-                //J_out = v_grid[N-1]*p_new[N-2] + (D / tau) * (p_new[N - 2] / dx);
-                // Drift flux at the boundary, use stored in workspace array
-                double J_drift = workspace[N-1];
-                // Diffusive Flux
-                //double J_diff = (D / tau) * (p[N-1] / dx);
-                // Total Outflux - this method is now equivalent to case 1
-                J_out = J_drift + J_diff;
-                break;
-            }
-            case 1:
-                // after adjusting boundary handling works for sub and supra
-                J_out = J_mass_lost;
-                break;
-
-            // - not needed anymore (Scharfetter Gummel approach) -
-            // case 2: { 
-            //     double v_boundary = 0.5 * (v_grid[N-2] + v_grid[N-1]);
-            //      // Peclet number: ratio of Drift/Diff
-            //     double alpha = (v_boundary * dx * tau) / D;  
-            //     // Avoid division by zero if drift is tiny
-            //     if (fabs(v_boundary) > 1e-9) {            
-            //         // Scharfetter-Gummel Flux Formula: J = v * P / (1 - exp(-v*dx/D))
-            //         // This captures the exponential tail: P(v) ~ exp(v*v/D)
-            //         double denominator = 1.0 - exp(-alpha);
-            //         // Check for numerical stability (if alpha is very close to 0)
-            //         if (fabs(denominator) > 1e-14) {
-            //             J_out = v_boundary * p[N - 1] / denominator;
-            //             // if (t%10000 == 0) {
-            //             //     double deviation = J_mass_lost - J_out;
-            //             //     printf("Deviation: %g", deviation);
-            //             //}
-            //         } else {
-            //             // Fallback to linear diffusion if drift is negligible
-            //             J_out = (D / tau * p[N - 1]) / dx;
-            //         }
-            //     } else {
-            //         // Pure Diffusion limit
-            //         J_out = (D / tau) * (p[N - 1]) / dx;
-            //     }
-            //    break;
-            // } 
+        case 0:
+        {
+            // J_out = v_grid[N-1]*p_new[N-2] + (D / tau) * (p_new[N - 2] / dx);
+            //  Drift flux at the boundary, use stored in workspace array
+            double J_drift = workspace[N - 1];
+            // Diffusive Flux
+            // double J_diff = (D / tau) * (p[N-1] / dx);
+            // Total Outflux - this method is now equivalent to case 1
+            J_out = J_drift + J_diff;
+            break;
         }
-        if (J_out < 0) J_out = 0.0;
+        case 1:
+            // after adjusting boundary handling works for sub and supra
+            J_out = J_mass_lost;
+            break;
+        }
+        if (J_out < 0)
+            J_out = 0.0;
 
         double r_t = 0.0;
-        switch (PARAM_METHOD) {
-            
-            // APPROACH 1 - Unstable 
-            case 0:
-                r_t = J_out;
-                break;
+        switch (PARAM_METHOD)
+        {
 
-            // APPROACH 2 - correction term (Tilo)
-            // we need to use lamda/tau to account for the timescale
-            case 1:
-                r_t = J_out + (lambda/tau) * (1 - current_mass);
-                break;
+        // APPROACH 1 - Unstable
+        case 0:
+            r_t = J_out;
+            break;
 
-            // APPROACH 3 - assuming poisson spike statistics, r(t) = J_out / mass, because lambda = r(t) + global renorm
-            case 2:
-                if (current_mass > 1e-9) {
-                    r_t = J_out / current_mass;
+        // APPROACH 2 - correction term (Tilo)
+        // we need to use lamda/tau to account for the timescale
+        case 1:
+            r_t = J_out + (lambda / tau) * (1 - current_mass);
+            break;
 
-                } else {
-                    r_t = J_out; // Fallback if mass is empty
-                }
-                break;
+        // APPROACH 3 - assuming poisson spike statistics, r(t) = J_out / mass, because lambda = r(t) + global renorm
+        case 2:
+            if (current_mass > 1e-9)
+            {
+                r_t = J_out / current_mass;
+            }
+            else
+            {
+                r_t = J_out; // Fallback if mass is empty
+            }
+            break;
 
-            default:
-                printf("Error: Unknown Rate Method %d\n", PARAM_METHOD);
-                exit(1);
+        default:
+            printf("Error: Unknown Rate Method %d\n", PARAM_METHOD);
+            exit(1);
         }
-        // only positive rates 
-        if (r_t < 0.0) r_t = 0.0;
+        // only positive rates
+        if (r_t < 0.0)
+            r_t = 0.0;
 
         double xi_t = randn() / sqrt(dt);
         // -- 4. Calculate Stochastic Rate A(t) --
@@ -198,18 +254,21 @@ int main()
         int reset_idx = (int)((V_rest - V_min) / dx);
         // dp/dt = A(t) here because the absorbing boundary takes the mass out of the system
         p_new[reset_idx] += (A_t * dt) / dx;
-        
-        
-        if (PARAM_METHOD == 2) {   // this is now global renormalization
+
+        if (PARAM_METHOD == 2)
+        { // this is now global renormalization
             double new_mass = 0.0;
-            for (int i = 0; i < N; i++) {
+            for (int i = 0; i < N; i++)
+            {
                 new_mass += p_new[i] * dx;
             }
 
             // Normalize to exactly 1.0
-            if (new_mass > 1e-9) {
+            if (new_mass > 1e-9)
+            {
                 double correction_factor = 1.0 / new_mass;
-                for (int i = 0; i < N; i++) {
+                for (int i = 0; i < N; i++)
+                {
                     p_new[i] *= correction_factor;
                 }
             }
@@ -218,7 +277,7 @@ int main()
         // swap pointers
         swap_pointers(&p, &p_new);
 
-        // record density at 
+        // record density at
         if (t % save_interval == 0)
         {
             for (int i = 0; i < N; i++)
@@ -252,6 +311,12 @@ int main()
             printf("\r[%.1f%%] Step: %d | ETA: %.1fs",
                    progress * 100.0, t, eta);
             fflush(stdout);
+        }
+        past_rate[write_idx] = A_t;
+        write_idx++;
+        if (write_idx >= buffer_size)
+        {
+            write_idx = 0;
         }
     }
 
@@ -289,6 +354,15 @@ void initialize_system(double *p, double *v_grid, int N, double dx, double V_min
     }
 }
 
+void update_v_grid(double *v_grid, int N, double dx, double V_min, double mu, double tau)
+{
+    for (int i = 0; i < N; i++)
+    {
+        double v_real = V_min + i * dx;
+        v_grid[i] = (mu - v_real) / tau;
+    }
+}
+
 // diffusion calculated implicitly using crank nicholson
 void diffusion_crank_nicholson(double *p, int N, double D, double tau, double dx, double dt, double *x, double *a, double *b, double *c, double *scratch)
 {
@@ -317,7 +391,7 @@ void diffusion_crank_nicholson(double *p, int N, double D, double tau, double dx
         p[k + 1] = x[k];
     }
     p[0] = 0.0;
-    //p[N - 1] = 0.0;
+    // p[N - 1] = 0.0;
 }
 
 void thomas(const int X, double *x, const double *a, const double *b, const double *c, double *scratch)
@@ -339,6 +413,7 @@ void thomas(const int X, double *x, const double *a, const double *b, const doub
         x[ix] -= scratch[ix] * x[ix + 1];
 }
 
+// van Leer flux limiter
 double slope_limiter(double *p, int i)
 {
     // we look at the slope of the density at the left and right cell
@@ -361,38 +436,42 @@ double slope_limiter(double *p, int i)
 void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, double *v_grid, double v_exit)
 {
     // Interior flux
-    for (int i = 0; i < N - 1; i++) {
+    for (int i = 0; i < N - 1; i++)
+    {
         // we want the avergae velocity at the interface
         double v_interface = 0.5 * (v_grid[i] + v_grid[i + 1]);
-        if (i == 0) flux[i] = 0.0;
-        else flux[i] = get_upwind_flux(p, i, v_interface, dt, dx, N);
+        if (i == 0)
+            flux[i] = 0.0;
+        else
+            flux[i] = get_upwind_flux(p, i, v_interface, dt, dx, N);
     }
 
     // flux at exactly the boundary
-    double J_drift_exit = (v_exit > 0) ? (v_exit * p[N-1]) : 0.0;
-    
+    double J_drift_exit = (v_exit > 0) ? (v_exit * p[N - 1]) : 0.0;
+
     // save for use in main
-    flux[N-1] = J_drift_exit;
+    flux[N - 1] = J_drift_exit;
 
     // update grid
-    for (int i = 1; i < N; i++) {
+    for (int i = 1; i < N; i++)
+    {
         double flux_in = flux[i - 1];
         double flux_out = (i == N - 1) ? J_drift_exit : flux[i];
         // change in probability mass
         p_new[i] = p[i] - (dt / dx) * (flux_out - flux_in);
     }
-    
+
     // Safety
-    p_new[0] = 0.0; 
+    p_new[0] = 0.0;
 }
-// 
+//
 // void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, double *v_grid)
 // {
 
-//     // CURRENT: TODO need to safeguard against out of bounds access since we loop to n-1 
+//     // CURRENT: TODO need to safeguard against out of bounds access since we loop to n-1
 //     for (int i = 1; i < N - 1; i++)
 //     {
-//         
+//
 //         double v_interface = 0.5 * (v_grid[i] + v_grid[i + 1]);
 //         flux[i] = get_upwind_flux(p, i, v_interface, dt, dx, N);
 //     }
@@ -403,13 +482,12 @@ void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, 
 
 //     for (int i = 1; i < N - 1; i++)
 //     {
-//         
+//
 //         p_new[i] = p[i] - (dt / dx) * (flux[i] - flux[i - 1]);
 //     }
 //     p_new[0] = 0.0;
 //     p_new[N - 1] = 0.0;
 // }
-
 
 double get_upwind_flux(double *p, int i, double v, double dt, double dx, int N)
 {
@@ -422,10 +500,11 @@ double get_upwind_flux(double *p, int i, double v, double dt, double dx, int N)
         // drift is going from left to right (we only change indexing direction)
         // needs p[i] and p[i-1] for slope
         // drop to first order to avoid out of bounds access
-        if (i == 0) {
+        if (i == 0)
+        {
             return v * p[i];
         }
-        
+
         double slope = slope_limiter(p, i);
         return v * (p[i] + 0.5 * (1.0 - courant) * slope);
     }
@@ -434,15 +513,15 @@ double get_upwind_flux(double *p, int i, double v, double dt, double dx, int N)
         // drift is going from right to left
         // needs p[i+1] and p[i+2] for slope
         // drop to first order to avoid out of bounds access
-        if (i >= N - 2) {
-             return v * p[i+1]; // 1st Order fallback (Safe)
+        if (i >= N - 2)
+        {
+            return v * p[i + 1]; // 1st Order fallback (Safe)
         }
 
-        double slope = slope_limiter(p, i+1);
-        return v * (p[i+1] - 0.5 * (1.0 + courant) * slope);
+        double slope = slope_limiter(p, i + 1);
+        return v * (p[i + 1] - 0.5 * (1.0 + courant) * slope);
     }
 }
-
 
 void swap_pointers(double **p, double **p_new)
 {
