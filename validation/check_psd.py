@@ -43,7 +43,7 @@ def run_network(N, mu, D, tau, V_th, V_reset, dt_net):
     
     T_sim = time_fpe[-1]
     steps = int(T_sim / dt_net)
-    
+    spike_times = [[] for _ in range(int(N))]
     # 1. Pre-allocate Array (float32 saves 50% RAM vs standard float)
     activity_net = np.zeros(steps, dtype=np.float32)
     
@@ -62,15 +62,22 @@ def run_network(N, mu, D, tau, V_th, V_reset, dt_net):
         noise = np.random.normal(0, 1, int(N))
         v += ((mu - v) * drift_factor) + (noise * noise_factor)
         spikes = v >= V_th
+        # record spike times
+        if np.any(spikes):
+            fired_indices = np.where(spikes)[0]
+            current_time = i * dt_net
+            for idx in fired_indices:
+                spike_times[idx].append(current_time)
+
         v[spikes] = V_reset
         
         rate_hz = np.sum(spikes) / (N * (dt_net / 1000.0))
         activity_net[i] = rate_hz
         
-    return activity_net
+    return activity_net, spike_times
 
 # --- 3. PSD Calculation ---
-def calculate_psd(activity_net, activity_fpe, method="bartlett"):
+def calculate_psd(activity_net, activity_fpe, spike_times, method="bartlett"):
     print(f"\nComputing Spectra using {method} method...")
     
     dt_net_sec = dt_net / 1000.0
@@ -84,9 +91,9 @@ def calculate_psd(activity_net, activity_fpe, method="bartlett"):
             freq_net, psd_net = welch(activity_net, fs=fs_net, nperseg=2048)
         
     elif method == "bartlett":
-        freq_fpe, psd_fpe = periodogram(activity_fpe, dt_fpe_sec, df=1)
+        freq_fpe, psd_fpe = periodogram(activity_fpe, dt_fpe_sec, df=0.5)
         if activity_net is not np.nan:
-            freq_net, psd_net = periodogram(activity_net, dt_net_sec, df=1)
+            freq_net, psd_net = periodogram(activity_net, dt_net_sec, df=0.5)
     
     # apply smoothing
     freq_fpe, psd_fpe = log_smooth(freq_fpe, psd_fpe, bins_per_decade=20)
@@ -99,6 +106,18 @@ def calculate_psd(activity_net, activity_fpe, method="bartlett"):
     rate_exact_hz = rate_whitenoise_benji(mu_dim, sigma_dim) * (1000.0 / tau)
     psd_theory_level = rate_exact_hz / N_neurons
     low_freq_limit = rate_exact_hz*(CV**2)/N_neurons
+
+    cv_list = []
+    for neuron_spikes in spike_times:
+        if len(neuron_spikes) > 2: # Need at least 2 spikes to have an interval
+            isi = np.diff(neuron_spikes) # Inter-spike intervals
+            mean_isi = np.mean(isi)
+            std_isi = np.std(isi)
+            if mean_isi > 0:
+                cv_list.append(std_isi / mean_isi)
+
+    cv_micro = np.mean(cv_list)
+    low_freq_limit_empirical = np.mean(activity_net)*(cv_micro**2)/N_neurons
 
     # Calculate Full Theoretical Curve
     # Use FPE frequencies as the axis
@@ -118,7 +137,8 @@ def calculate_psd(activity_net, activity_fpe, method="bartlett"):
 
     plt.axhline(psd_theory_level, color='green', linestyle=':', linewidth=2, label=f'Poisson')
     plt.axhline(low_freq_limit, color='blue', linestyle=':', linewidth=2, label=f'Low frequency limit')
-    
+    #plt.axhline(low_freq_limit_empirical, color='orange', linestyle=':', linewidth=2, label=f'Low frequency limit (empirical)')
+
     plt.title(fr"PSD Validation Check (N={N_neurons}, $\mu$={mu}, D={D}, $\tau$={tau})")
     plt.xlabel("Frequency (Hz)")
     plt.ylabel("Power Spectral Density")
@@ -136,7 +156,6 @@ def calculate_psd(activity_net, activity_fpe, method="bartlett"):
 
 if __name__ == "__main__":
     # Run
-    activity_net = run_network(N_neurons, mu, D, tau, V_th, V_reset, dt_net) if N_neurons <= 10000 else np.nan
+    activity_net, spike_times = run_network(N_neurons, mu, D, tau, V_th, V_reset, dt_net) if N_neurons <= 20000 else np.nan
     
-    # Use Bartlett to see noise clearly
-    calculate_psd(activity_net, activity_fpe, method="bartlett")
+    calculate_psd(activity_net, activity_fpe, spike_times, method="bartlett")

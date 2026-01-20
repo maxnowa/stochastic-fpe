@@ -90,26 +90,6 @@ def cv_benji(mu, D):
     B, _ = quad(outer, a1, 100)
     return sqrt(B) / T
 
-# def cv_benji(mu,sigma_x):
-#     """CV of white-noise driven LIF neuron according Lindner PhD thesis p.48
-
-#     dx/dt=-x+mu+sqrt(2)*sigma_x*xi(t)
-
-#     """
-#     def psi4(y):
-#         return exp(y**2)*(y<a2)
-
-#     def psi3(x):
-#         a1=(mu-1)/sqrt(2*D)
-#         z,err=quad(func=psi4,a=a1,b=x)
-
-#     D=sigma_x**2
-#     a1=(mu-1)/sqrt(2*D)
-#     a2=mu/sqrt(2*D)
-#     T,err=quad(func=Psi2,a=a1,b=a2)
-#     T=T*sqrt(pi)
-#     B=
-#     return sqrt(V)/T
 
 
 def Psi(s):
