@@ -40,10 +40,18 @@ int main()
     double dx = (V_max - V_min) / N;
     double stability_factor = 4.0;
     // since we have a constant mu and D, R0 and CV are constant
+    // FIX for the w!=0 case, because mu changes at each step -> this requires re-calculation at each time step, which could make the solver unstable
+    // what could be done is that instead of using the instantaneous rate, we low pass filter it or use a running average of lambda/rate
     double lambda = PARAM_R0 / PARAM_CV;
     // UNSAFE initial value
     double dt = 1e-5;
     double w = PARAM_W;
+    double connectivity_p = PARAM_CONNECTIVITY;
+    double sigma_w_squared = 0.0;
+    // Calculate Weight Variance 
+    if (connectivity_p < 1.0 && connectivity_p > 0.0) {
+        sigma_w_squared = (w * w) * (1.0 - connectivity_p) / connectivity_p;
+    }
 
     // allocate memory
     double *p = (double *)malloc(N * sizeof(double));
@@ -61,8 +69,6 @@ int main()
     double mu = PARAM_MU;
     double tau = PARAM_TAU;
     double N_neurons = (double)PARAM_N_NEURONS;
-    // FIX only for non recurrence
-    double v_exit = (mu - V_th) / tau;
 
     // initialize the grid
     initialize_system(p, v_grid, N, dx, V_min, mu, tau);
@@ -73,7 +79,7 @@ int main()
     }
     else
     {
-        double max_anticipated_rate = (w > 0) ? 1000.0 : 150.0;
+        double max_anticipated_rate = (w > 0) ? 1000.0 : 300.0;
         double mu_extreme = mu + (w * max_anticipated_rate);
         
         double v_speed_base = fmax(fabs((mu - V_min)/tau), fabs((mu - V_max)/tau));
@@ -92,11 +98,13 @@ int main()
     }
     int buffer_size = (int)(delay / dt);
     // this stores the past rates
-    double *past_rate = (double *)calloc((buffer_size + 1), sizeof(double));
+    double *history_A_t = (double *)calloc((buffer_size + 1), sizeof(double));
+    double *history_r_t = (double *)calloc((buffer_size + 1), sizeof(double));
+
     double initial_rate = 0.0;
     for (int i = 0; i < buffer_size; i++)
     {
-        past_rate[i] = initial_rate;
+        history_r_t[i] = initial_rate;
     }
     int write_idx = 0;
 
@@ -111,7 +119,7 @@ int main()
 
     // initialize buffer to block write the data
     float p_buffer[N];
-    // --- INSERT 1: Setup Timer ---
+    // --- Setup Timer ---
     int total_steps = (int)(PARAM_T_MAX / dt);
     int report_interval = total_steps / 1000;
     if (report_interval == 0)
@@ -121,16 +129,26 @@ int main()
 
     for (int t = 0; t < steps; t++)
     {
-        double A_t_delayed = past_rate[write_idx];
-        // update v_grid
+        double A_t_delayed = history_A_t[write_idx];
+        double r_t_delayed = history_r_t[write_idx];
+        // calculate effective drift
         double mu_eff = mu; 
         if (recurrence_mode == 1) {
             mu_eff += (w * A_t_delayed);
         }
-        update_v_grid(v_grid, N, dx, V_min, mu_eff, tau);
-        v_exit = (mu_eff - V_th) / tau;
+        // calculate effective diffusion for p<1
+        double D_w = 0.0;
+        if (recurrence_mode == 1 && connectivity_p < 1.0) {
+            // D_w(t) = (sigma_w^2 / 2N) * r(t-d)
+            // Ensure units match: if D is in mV^2/ms, r must be in kHz (1/ms)
+            D_w = (sigma_w_squared / (2.0 * N_neurons)) * r_t_delayed;
+        }
+        double D_eff = D + D_w;
 
-        // --- INSERT START: Runtime CFL Safety Check ---
+        update_v_grid(v_grid, N, dx, V_min, mu_eff, tau);
+        double v_exit = (mu_eff - V_th) / tau;
+
+        // --- Runtime CFL Safety Check ---
         double current_max_v = 0.0;
         for (int i = 0; i < N; i++) {
             if (fabs(v_grid[i]) > current_max_v) {
@@ -160,7 +178,7 @@ int main()
 
         // Operator splitting approach
         // -- Step 1 - Diffusion using crank nicholson --
-        diffusion_crank_nicholson(p, N, D, tau, dx, dt, x_rhs, a_diag, b_diag, c_diag, workspace);
+        diffusion_crank_nicholson(p, N, D_eff, tau, dx, dt, x_rhs, a_diag, b_diag, c_diag, workspace);
 
         // we measure the diffusion rate directly
         double mass_diff = 0.0;
@@ -194,7 +212,7 @@ int main()
         case 0:
         {
             // J_out = v_grid[N-1]*p_new[N-2] + (D / tau) * (p_new[N - 2] / dx);
-            //  Drift flux at the boundary, use stored in workspace array
+            // Drift flux at the boundary, use stored in workspace array
             double J_drift = workspace[N - 1];
             // Diffusive Flux
             // double J_diff = (D / tau) * (p[N-1] / dx);
@@ -312,7 +330,9 @@ int main()
                    progress * 100.0, t, eta);
             fflush(stdout);
         }
-        past_rate[write_idx] = A_t;
+        history_A_t[write_idx] = A_t;
+        history_r_t[write_idx] = r_t;
+
         write_idx++;
         if (write_idx >= buffer_size)
         {
@@ -330,6 +350,10 @@ int main()
     free(b_diag);
     free(c_diag);
     free(x_rhs);
+
+    free(v_grid);
+    free(history_A_t);
+    free(history_r_t);
 
     printf("\r[100%%] Simulation Complete. Total time: %.1fs\n",
            (double)(clock() - start_time) / CLOCKS_PER_SEC);

@@ -20,7 +20,7 @@ def steady_state_rate(mu, D, tau, V_th, V_reset, t_ref=0):
     """
     # subthreshold
     if mu <= V_th:
-        # implements the subthreshold approximation from Lindner (Neural noosie script p. 66)
+        # implements the subthreshold approximation from Lindner (Neural noise script p. 66)
         term_pre = np.sqrt((2 * np.pi * D) / (mu - V_th)**2)  
         term_exp = np.exp((mu - V_th)**2 / (2 * D))
         T_total = tau * term_pre * term_exp
@@ -48,6 +48,7 @@ def plot_stationary_check(fpe_file="data/activity.bin"):
         mu, D, tau = 1.2, 0.01, 10.0
         V_th, V_reset = 1.0, 0.0
         T_max = 20000.0
+        print("Error loading parameters. Using defaults.")
 
     # --- 2. Load Simulation Data (Binary) ---
     if not os.path.exists(fpe_file):
@@ -56,7 +57,6 @@ def plot_stationary_check(fpe_file="data/activity.bin"):
 
     try:
         # Read raw float32 data
-        # CHANGED: Use memmap for instant loading
         raw_data = np.memmap(fpe_file, dtype=np.float32, mode='r')
         # Reshape: [Rate, Mass] (2 columns)
         data = raw_data.reshape(-1, 2)
@@ -92,8 +92,7 @@ def plot_stationary_check(fpe_file="data/activity.bin"):
     rate_sim_mean = np.mean(rate_sim_view[start_idx::stat_stride]) * 1000.0
     
     # --- 4. Prepare Data for Plotting (Smoothing & Downsampling) ---
-    # CHANGED: Downsample FIRST, then create time axis
-    target_points = 100_000
+    target_points = 200_000
     ds_factor = max(1, num_steps // target_points)
     print(f"Plotting downsampled by factor {ds_factor} ({num_steps} -> {num_steps//ds_factor} points)")
 

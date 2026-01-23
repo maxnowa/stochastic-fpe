@@ -8,19 +8,20 @@ import numpy as np
 # These are used only if params.h doesn't exist yet
 DEFAULT_PARAMS = {
     "PARAM_N_NEURONS": 500,
-    "PARAM_T_MAX":     2000.0,
+    "PARAM_T_MAX":     11000.0,
     "PARAM_TAU":       1,
     "PARAM_MU":        1.2,
     "PARAM_D":         0.01,
     "PARAM_V_TH":      1.0,
     "PARAM_V_RESET":   0.0,
     "PARAM_DT_NET":    0.005,
-    "PARAM_GRID_N":    500,
+    "PARAM_GRID_N":    400,
     "PARAM_METHOD":    1, 
     "PARAM_FLUX_METHOD": 1,
     "PARAM_DELAY": 0,
-    "PARAM_W": -1,
-    "PARAM_RECURRENCE": 1
+    "PARAM_W": 0.05,
+    "PARAM_RECURRENCE": 1,
+    "PARAM_CONNECTIVITY": 0.3,
 }
 
 PARAMS_HEADER_PATH = "src/params.h"
@@ -68,7 +69,6 @@ def calculate_derived(p):
         p["PARAM_R0"] = 0.0
     return p
 
-# --- 3. The "Hybrid" Logic ---
 
 if __name__ == "__main__":
     # === CLI MODE (Called by Makefile) ===

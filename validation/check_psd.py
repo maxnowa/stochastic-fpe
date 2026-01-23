@@ -20,6 +20,9 @@ dt_net = PARAMS["PARAM_DT_NET"]
 T_max = PARAMS["PARAM_T_MAX"]
 CV = PARAMS["PARAM_CV"]
 R0 = PARAMS["PARAM_R0"]   
+recurrence = PARAMS["PARAM_RECURRENCE"]
+w = PARAMS["PARAM_W"]
+delay = PARAMS["PARAM_DELAY"]
 
 fpe_file = "data/activity.bin"
 
@@ -37,8 +40,10 @@ activity_fpe = data_fpe[:, 0] * 1000.0
 dt_fpe = time_fpe[1] - time_fpe[0]
 print(f"FPE Data Loaded: T={time_fpe[-1]}ms, dt_save={dt_fpe:.3f}ms")
 
+
+
 # --- 2. Network Simulation ---
-def run_network(N, mu, D, tau, V_th, V_reset, dt_net):
+def run_network(N, mu, D, tau, V_th, V_reset, dt_net, w, recurrence=False):
     print("\nRunning Network Simulation (Monte Carlo)...")
     
     T_sim = time_fpe[-1]
@@ -57,10 +62,21 @@ def run_network(N, mu, D, tau, V_th, V_reset, dt_net):
     drift_factor = dt_net / tau
     noise_factor = diffusion_coeff * np.sqrt(dt_net)
 
+    buffer_size = int(delay/dt_net) + 1
+    past_rate = np.zeros(buffer_size)
+    write_idx = 0
+
     # 3. Use index 'i' to fill the pre-allocated array
     for i in range(steps):
+        # get old rate from delay timesteps ago
+        A_t = past_rate[write_idx]
+        mu_eff = mu
+        # set effective mu, else leave it just mu
+        if recurrence:
+            mu_eff = mu + w*A_t
+
         noise = np.random.normal(0, 1, int(N))
-        v += ((mu - v) * drift_factor) + (noise * noise_factor)
+        v += ((mu_eff - v) * drift_factor) + (noise * noise_factor)
         spikes = v >= V_th
         # record spike times
         if np.any(spikes):
@@ -73,7 +89,9 @@ def run_network(N, mu, D, tau, V_th, V_reset, dt_net):
         
         rate_hz = np.sum(spikes) / (N * (dt_net / 1000.0))
         activity_net[i] = rate_hz
-        
+        # write new rate and increment write index
+        past_rate[write_idx] = rate_hz/1000
+        write_idx = (write_idx+1) % buffer_size
     return activity_net, spike_times
 
 # --- 3. PSD Calculation ---
@@ -91,9 +109,9 @@ def calculate_psd(activity_net, activity_fpe, spike_times, method="bartlett"):
             freq_net, psd_net = welch(activity_net, fs=fs_net, nperseg=2048)
         
     elif method == "bartlett":
-        freq_fpe, psd_fpe = periodogram(activity_fpe, dt_fpe_sec, df=0.5)
+        freq_fpe, psd_fpe = periodogram(activity_fpe, dt_fpe_sec, df=1)
         if activity_net is not np.nan:
-            freq_net, psd_net = periodogram(activity_net, dt_net_sec, df=0.5)
+            freq_net, psd_net = periodogram(activity_net, dt_net_sec, df=1)
     
     # apply smoothing
     freq_fpe, psd_fpe = log_smooth(freq_fpe, psd_fpe, bins_per_decade=20)
@@ -133,12 +151,16 @@ def calculate_psd(activity_net, activity_fpe, spike_times, method="bartlett"):
     
     plt.loglog(freq_fpe, psd_fpe, color='red', linestyle='--', linewidth=2, label='FPE Solver (Mesoscopic)')
 
-    plt.loglog(theory_freqs, theory_curve, color='black', linewidth=1.5, label='Exact')
 
-    plt.axhline(psd_theory_level, color='green', linestyle=':', linewidth=2, label=f'Poisson')
-    plt.axhline(low_freq_limit, color='blue', linestyle=':', linewidth=2, label=f'Low frequency limit')
+    if not recurrence:
+        plt.loglog(theory_freqs, theory_curve, color='black', linewidth=1.5, label='Exact')
+        plt.axhline(psd_theory_level, color='green', linestyle=':', linewidth=2, label=f'Poisson')
+        plt.axhline(low_freq_limit, color='blue', linestyle=':', linewidth=2, label=f'Low frequency limit')
     #plt.axhline(low_freq_limit_empirical, color='orange', linestyle=':', linewidth=2, label=f'Low frequency limit (empirical)')
-
+    else:
+        pass
+        # insert logic for mean-field theory prediction here
+        
     plt.title(fr"PSD Validation Check (N={N_neurons}, $\mu$={mu}, D={D}, $\tau$={tau})")
     plt.xlabel("Frequency (Hz)")
     plt.ylabel("Power Spectral Density")
@@ -156,6 +178,6 @@ def calculate_psd(activity_net, activity_fpe, spike_times, method="bartlett"):
 
 if __name__ == "__main__":
     # Run
-    activity_net, spike_times = run_network(N_neurons, mu, D, tau, V_th, V_reset, dt_net) if N_neurons <= 20000 else np.nan
+    activity_net, spike_times = run_network(N_neurons, mu, D, tau, V_th, V_reset, dt_net, w, recurrence=recurrence) if N_neurons <= 20000 else np.nan
     
     calculate_psd(activity_net, activity_fpe, spike_times, method="bartlett")
