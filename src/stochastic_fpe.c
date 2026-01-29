@@ -35,7 +35,7 @@ int main()
     int N = PARAM_GRID_N;
     double D = PARAM_D;
     double T = PARAM_T_MAX;
-    double V_min = -0.6;
+    double V_min = -0.8;
     double V_max = 1.0;
     double dx = (V_max - V_min) / N;
     double stability_factor = 4.0;
@@ -79,7 +79,7 @@ int main()
     }
     else
     {
-        double max_anticipated_rate = (w > 0) ? 1000.0 : 300.0;
+        double max_anticipated_rate = (w > 0) ? 600.0 : 300.0;
         double mu_extreme = mu + (w * max_anticipated_rate);
         
         double v_speed_base = fmax(fabs((mu - V_min)/tau), fabs((mu - V_max)/tau));
@@ -121,7 +121,7 @@ int main()
     float p_buffer[N];
     // --- Setup Timer ---
     int total_steps = (int)(PARAM_T_MAX / dt);
-    int report_interval = total_steps / 1000;
+    int report_interval = total_steps / 10000;
     if (report_interval == 0)
         report_interval = 1;
     int save_interval = 1000;
@@ -137,13 +137,11 @@ int main()
             mu_eff += (w * A_t_delayed);
         }
         // calculate effective diffusion for p<1
-        double D_w = 0.0;
+        double D_eff = D;
         if (recurrence_mode == 1 && connectivity_p < 1.0) {
             // D_w(t) = (sigma_w^2 / 2N) * r(t-d)
-            // Ensure units match: if D is in mV^2/ms, r must be in kHz (1/ms)
-            D_w = (sigma_w_squared / (2.0 * N_neurons)) * r_t_delayed;
+            D_eff += (sigma_w_squared / (2.0 * N_neurons)) * r_t_delayed;
         }
-        double D_eff = D + D_w;
 
         update_v_grid(v_grid, N, dx, V_min, mu_eff, tau);
         double v_exit = (mu_eff - V_th) / tau;
@@ -228,6 +226,7 @@ int main()
         if (J_out < 0)
             J_out = 0.0;
 
+            
         double r_t = 0.0;
         switch (PARAM_METHOD)
         {
@@ -240,6 +239,7 @@ int main()
         // APPROACH 2 - correction term (Tilo)
         // we need to use lamda/tau to account for the timescale
         case 1:
+            // lambda = r_t_delayed;
             r_t = J_out + (lambda / tau) * (1 - current_mass);
             break;
 
@@ -326,7 +326,7 @@ int main()
                 eta = elapsed * (1.0 / progress - 1.0);
             }
 
-            printf("\r[%.1f%%] Step: %d | ETA: %.1fs",
+            printf("\r[%.2f%%] Step: %d | ETA: %.1fs",
                    progress * 100.0, t, eta);
             fflush(stdout);
         }
@@ -437,25 +437,7 @@ void thomas(const int X, double *x, const double *a, const double *b, const doub
         x[ix] -= scratch[ix] * x[ix + 1];
 }
 
-// van Leer flux limiter
-double slope_limiter(double *p, int i)
-{
-    // we look at the slope of the density at the left and right cell
-    double slope_left = p[i] - p[i - 1];
-    double slope_right = p[i + 1] - p[i];
-    // go back to first order if the slope is not the same (TVD)
-    if (slope_left * slope_right <= 0.0)
-    {
-        return 0.0;
-    }
-    // return value based on slope
-    // this make it second order in space because we take the shape into account
-    else
-    {
-        double limit = (2 * slope_left * slope_right) / (slope_left + slope_right);
-        return limit;
-    }
-}
+
 // drift caclulated using second-order TVD upwind differencing scheme - we are using Lax-Wendroff correction and van Leer flux limiter
 void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, double *v_grid, double v_exit)
 {
@@ -529,8 +511,8 @@ double get_upwind_flux(double *p, int i, double v, double dt, double dx, int N)
             return v * p[i];
         }
 
-        double slope = slope_limiter(p, i);
-        return v * (p[i] + 0.5 * (1.0 - courant) * slope);
+        double limited_slope = slope_limiter(p, i);
+        return v * (p[i] + 0.5 * (1.0 - courant) * limited_slope);
     }
     else
     {
@@ -542,8 +524,29 @@ double get_upwind_flux(double *p, int i, double v, double dt, double dx, int N)
             return v * p[i + 1]; // 1st Order fallback (Safe)
         }
 
-        double slope = slope_limiter(p, i + 1);
-        return v * (p[i + 1] - 0.5 * (1.0 + courant) * slope);
+        double limited_slope = slope_limiter(p, i + 1);
+        return v * (p[i + 1] - 0.5 * (1.0 + courant) * limited_slope);
+    }
+}
+
+// van Leer flux limiter
+double slope_limiter(double *p, int i)
+{
+    // we look at the slope of the density at the left and right cell
+    double slope_left = p[i] - p[i - 1];
+    double slope_right = p[i + 1] - p[i];
+    // go back to first order if the slope is not the same (TVD)
+    if (slope_left * slope_right <= 0.0)
+    {
+        return 0.0;
+    }
+    // return value based on slope
+    // this make it second order in space because we take the shape into account
+    else
+    {   
+        // this implicitly calculates slope*phi(r)
+        double limited_slope = (2 * slope_left * slope_right) / (slope_left + slope_right);
+        return limited_slope;
     }
 }
 

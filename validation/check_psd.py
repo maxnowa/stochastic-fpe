@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import welch
+from tqdm import tqdm
 import os
 import sys
 
@@ -23,10 +24,11 @@ R0 = PARAMS["PARAM_R0"]
 recurrence = PARAMS["PARAM_RECURRENCE"]
 w = PARAMS["PARAM_W"]
 delay = PARAMS["PARAM_DELAY"]
+p = PARAMS["PARAM_CONNECTIVITY"]
 
 fpe_file = "data/activity.bin"
 
-# --- 1. Load FPE Data (Binary) ---
+# --- Load FPE Data (Binary) ---
 if not os.path.exists(fpe_file):
     print(f"Error: {fpe_file} not found. Run the solver first.")
     sys.exit(1)
@@ -40,45 +42,69 @@ activity_fpe = data_fpe[:, 0] * 1000.0
 dt_fpe = time_fpe[1] - time_fpe[0]
 print(f"FPE Data Loaded: T={time_fpe[-1]}ms, dt_save={dt_fpe:.3f}ms")
 
+def calculate_deviation_metrics(freq_net, psd_net, freq_fpe, psd_fpe, f_min=1.0, f_max=10000.0):
+    mask_fpe = (freq_fpe >= f_min) & (freq_fpe <= f_max)
+    f_eval = freq_fpe[mask_fpe]
+    p_fpe_eval = psd_fpe[mask_fpe]
+    p_net_interp = np.interp(f_eval, freq_net, psd_net)
+    log_diff = np.log10(p_net_interp) - np.log10(p_fpe_eval)
+    lsd = np.sqrt(np.mean(log_diff**2))
+    mse = np.mean((p_net_interp - p_fpe_eval)**2)
+    rmse = np.sqrt(mse)
+    mean_power = np.mean(p_fpe_eval)
+    r_rmse = rmse / mean_power
+    return lsd, r_rmse
 
-
-# --- 2. Network Simulation ---
-def run_network(N, mu, D, tau, V_th, V_reset, dt_net, w, recurrence=False):
-    print("\nRunning Network Simulation (Monte Carlo)...")
+# --- Network Simulation ---
+def run_network(N, mu, D, tau, V_th, V_reset, dt_net, w, p=1.0, recurrence=False):
+    print(f"\nRunning Network Simulation (Monte Carlo, p={p})...")
     
     T_sim = time_fpe[-1]
     steps = int(T_sim / dt_net)
+    dt_seconds = dt_net / 1000.0  
+    
     spike_times = [[] for _ in range(int(N))]
-    # 1. Pre-allocate Array (float32 saves 50% RAM vs standard float)
     activity_net = np.zeros(steps, dtype=np.float32)
     
-    # 2. Report Memory Usage
     mem_mb = activity_net.nbytes / (1024 ** 2)
     print(f"   Steps: {steps:,} | Memory Allocated: {mem_mb:.2f} MB")
     
+    J_val = 0.0
+    connectivity_matrix = None
+    buffer_size = int(delay / dt_net) + 1
+    spike_buffer = np.zeros((buffer_size, int(N)), dtype=np.float32)
+
+    if recurrence and w != 0:
+        if p >= 1.0:
+            print("   Structure: All-to-All (Vectorized)")
+        else:
+            print("   Structure: Sparse Random Matrix")
+            J_val = w / p 
+            connectivity_matrix = (np.random.rand(int(N), int(N)) < p).astype(np.float32) * J_val
+
     v = np.zeros(int(N))
-    
     diffusion_coeff = np.sqrt(2 * D / tau)
     drift_factor = dt_net / tau
     noise_factor = diffusion_coeff * np.sqrt(dt_net)
-
-    buffer_size = int(delay/dt_net) + 1
-    past_rate = np.zeros(buffer_size)
     write_idx = 0
 
-    # 3. Use index 'i' to fill the pre-allocated array
-    for i in range(steps):
-        # get old rate from delay timesteps ago
-        A_t = past_rate[write_idx]
-        mu_eff = mu
-        # set effective mu, else leave it just mu
-        if recurrence:
-            mu_eff = mu + w*A_t
+    for i in tqdm(range(steps), desc="   Simulating", unit="step"):
+        recurrent_kick = 0.0
+        if recurrence and w != 0:
+            read_idx = (write_idx + 1) % buffer_size 
+            delayed_spikes_vec = spike_buffer[read_idx] 
+            if p >= 1.0:
+                total_spikes = np.sum(delayed_spikes_vec)
+                recurrent_kick = ((w / N) / tau) * (total_spikes)
+            else:
+                recurrent_sum = (connectivity_matrix @ delayed_spikes_vec)
+                recurrent_kick = (recurrent_sum / N) / tau
 
         noise = np.random.normal(0, 1, int(N))
-        v += ((mu_eff - v) * drift_factor) + (noise * noise_factor)
+        v_new = v + ((mu - v) * drift_factor) + (noise * noise_factor)
+        v = v_new + recurrent_kick
+
         spikes = v >= V_th
-        # record spike times
         if np.any(spikes):
             fired_indices = np.where(spikes)[0]
             current_time = i * dt_net
@@ -86,21 +112,24 @@ def run_network(N, mu, D, tau, V_th, V_reset, dt_net, w, recurrence=False):
                 spike_times[idx].append(current_time)
 
         v[spikes] = V_reset
-        
-        rate_hz = np.sum(spikes) / (N * (dt_net / 1000.0))
+        rate_hz = np.sum(spikes) / (N * dt_seconds)
         activity_net[i] = rate_hz
-        # write new rate and increment write index
-        past_rate[write_idx] = rate_hz/1000
-        write_idx = (write_idx+1) % buffer_size
+        
+        if recurrence:
+            spike_buffer[write_idx] = spikes.astype(np.float32)
+        write_idx = (write_idx + 1) % buffer_size
+        
     return activity_net, spike_times
 
-# --- 3. PSD Calculation ---
+# --- PSD Calculation ---
 def calculate_psd(activity_net, activity_fpe, spike_times, method="bartlett"):
     print(f"\nComputing Spectra using {method} method...")
     
     dt_net_sec = dt_net / 1000.0
     dt_fpe_sec = dt_fpe / 1000.0
     
+    freq_net, psd_net = None, None # Initialize
+
     if method == "welch":
         fs_fpe = 1.0 / dt_fpe_sec
         fs_net = 1.0 / dt_net_sec
@@ -118,66 +147,45 @@ def calculate_psd(activity_net, activity_fpe, spike_times, method="bartlett"):
     if activity_net is not np.nan:
         freq_net, psd_net = log_smooth(freq_net, psd_net, bins_per_decade=20)
         
-    # Calculate Theoretical White Noise Level (Poisson Limit)
     mu_dim = (mu - V_reset) / (V_th - V_reset)
     sigma_dim = np.sqrt(D) / (V_th - V_reset)
     rate_exact_hz = rate_whitenoise_benji(mu_dim, sigma_dim) * (1000.0 / tau)
     psd_theory_level = rate_exact_hz / N_neurons
     low_freq_limit = rate_exact_hz*(CV**2)/N_neurons
 
-    cv_list = []
-    for neuron_spikes in spike_times:
-        if len(neuron_spikes) > 2: # Need at least 2 spikes to have an interval
-            isi = np.diff(neuron_spikes) # Inter-spike intervals
-            mean_isi = np.mean(isi)
-            std_isi = np.std(isi)
-            if mean_isi > 0:
-                cv_list.append(std_isi / mean_isi)
-
-    cv_micro = np.mean(cv_list)
-    low_freq_limit_empirical = np.mean(activity_net)*(cv_micro**2)/N_neurons
-
-    # Calculate Full Theoretical Curve
-    # Use FPE frequencies as the axis
     mask = (freq_fpe > 0.5) & (freq_fpe < 2500)
     theory_freqs = freq_fpe[mask]
     theory_curve = get_theoretical_curve(theory_freqs, mu, D, tau, V_th, V_reset, rate_exact_hz, N_neurons)
 
-    # --- Plotting ---
+    metric_text = ""
+    if activity_net is not np.nan:
+        lsd, r_rmse = calculate_deviation_metrics(freq_net, psd_net, freq_fpe, psd_fpe)
+        print(f"\n--- Validation Metrics ---")
+        print(f"Log-Spectral Distance (LSD): {lsd:.4f}")
+        print(f"Relative Deviation (R-RMSE): {r_rmse*100:.2f}%")
+        metric_text = f" | LSD: {lsd:.3f}, Err: {r_rmse*100:.1f}%"
+
+    # --- Standard Plotting ---
     plt.figure(figsize=(10, 6))
-    
     if activity_net is not np.nan:
         plt.loglog(freq_net, psd_net, color='gray', alpha=0.5, label='Microscopic')
-    
-    plt.loglog(freq_fpe, psd_fpe, color='red', linestyle='--', linewidth=2, label='FPE Solver (Mesoscopic)')
-
-
+    plt.loglog(freq_fpe, psd_fpe, color='red', linestyle='--', linewidth=2, label='FPE Solver')
     if not recurrence:
         plt.loglog(theory_freqs, theory_curve, color='black', linewidth=1.5, label='Exact')
         plt.axhline(psd_theory_level, color='green', linestyle=':', linewidth=2, label=f'Poisson')
         plt.axhline(low_freq_limit, color='blue', linestyle=':', linewidth=2, label=f'Low frequency limit')
-    #plt.axhline(low_freq_limit_empirical, color='orange', linestyle=':', linewidth=2, label=f'Low frequency limit (empirical)')
-    else:
-        pass
-        # insert logic for mean-field theory prediction here
-        
-    plt.title(fr"PSD Validation Check (N={N_neurons}, $\mu$={mu}, D={D}, $\tau$={tau})")
+    
+    plt.title(fr"PSD Validation (N={N_neurons}, $\mu$={mu}, D={D}, p={p}, w={w}){metric_text}")
     plt.xlabel("Frequency (Hz)")
     plt.ylabel("Power Spectral Density")
     plt.xlim(1, 10000)
-    
     plt.legend()
     plt.grid(True, which="both", alpha=0.3)
     plt.tight_layout()
-    
     if not os.path.exists("plots"): os.makedirs("plots")
     plt.savefig("plots/validation_psd.png", dpi=150)
     print(f"Theory Level: {psd_theory_level:.5f}")
-    print("\n✓ Validation Plot saved to plots/validation_psd.png")
-    # plt.show()
-
-if __name__ == "__main__":
-    # Run
-    activity_net, spike_times = run_network(N_neurons, mu, D, tau, V_th, V_reset, dt_net, w, recurrence=recurrence) if N_neurons <= 20000 else np.nan
     
+if __name__ == "__main__":
+    activity_net, spike_times = run_network(N_neurons, mu, D, tau, V_th, V_reset, dt_net, w, p=p, recurrence=recurrence) if N_neurons <= 20000 else (np.nan, None)
     calculate_psd(activity_net, activity_fpe, spike_times, method="bartlett")
