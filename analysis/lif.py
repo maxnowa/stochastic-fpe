@@ -7,15 +7,14 @@ from scipy.optimize import newton
 # derived from module fpt.py
 
 
-def Psi2(s):
-    return exp(s**2) * erfc(s)
-
+# def Psi2(s):
+#     return exp(s**2) * erfc(s)
+def Psi2(x):
+    return erfcx(x)
 
 def rate_whitenoise_benji(mu, sigma_x):
     """Rate of white-noise driven LIF neuron according Lindner PhD thesis p.48
-
     is more stable for large mu than Brunel version "rate_whitenoise()" below
-
     dx/dt=-x+mu+sqrt(2)*sigma_x*xi(t)
 
     """
@@ -37,7 +36,6 @@ def rate_whitenoise_benji2(Vrest, tau, D, Vth, Vreset):
     a1 = (mu - 1) / sqrt(2 * DD)
     a2 = mu / sqrt(2 * DD)
     T, err = quad(func=Psi2, a=a1, b=a2)
-    print(a1, a2, T, tau)
     T = T * sqrt(pi)
     return 1.0 / (T * tau)
 
@@ -67,9 +65,6 @@ def rate_whitenoise_benji2(Vrest, tau, D, Vth, Vreset):
 
 def cv_benji(mu, D):
     # 1. Calculate Mean First Passage Time (T)
-    # Using erfcx is safe here.
-    def Psi2(x):
-        return erfcx(x)
     
     a1 = (mu - 1) / sqrt(2 * D)
     a2 = mu / sqrt(2 * D)

@@ -11,11 +11,12 @@ BIN_DIR = bin
 ANALYSIS_DIR = analysis
 VALIDATION_DIR = validation
 
-# Output Binary
+# Files
 TARGET_BIN = $(BIN_DIR)/sfpe_solver
+PARAMS_H = $(SRC_DIR)/params.h
+LUT_FILE = $(SRC_DIR)/lambda_table.dat
 
 # --- Argument Parsing for config.py ---
-# Define a variable to hold python flags
 # Usage: make run_fpe METHOD=0 MU=1.5
 PY_FLAGS = 
 
@@ -35,30 +36,33 @@ endif
 # Default Target
 all: clean plot validate
 
-# 1. Generate Parameters
-# Logic: Run config.py. If it generates params.h in root, move to src/
-$(SRC_DIR)/params.h: config.py
-	python3 config.py $(PY_FLAGS)
-	@[ -f params.h ] && mv params.h $(SRC_DIR)/params.h || true
+# 1. Generate Lookup Table (Physics Landscape)
+# Only runs if the file doesn't exist or generate_lut.py changes
+$(LUT_FILE): generate_lut.py
+	python3 generate_lut.py
 
-# 2. Compile C Code
-$(TARGET_BIN): $(SRC_DIR)/stochastic_fpe.c $(SRC_DIR)/params.h
+# 2. Generate Parameters (Simulation Config)
+# Always runs config.py to update params.h with CLI args
+$(PARAMS_H): config.py
+	python3 config.py $(PY_FLAGS)
+
+# 3. Compile C Code
+# Depends on BOTH params.h and the LUT file existing
+$(TARGET_BIN): $(SRC_DIR)/stochastic_fpe.c $(PARAMS_H) $(LUT_FILE)
 	mkdir -p $(BIN_DIR)
 	$(CC) $(SRC_DIR)/stochastic_fpe.c -o $(TARGET_BIN) $(CFLAGS)
 
-# 3. Run FPE Simulation
+# 4. Run FPE Simulation
 run_fpe: $(TARGET_BIN)
 	mkdir -p $(DATA_DIR)
 	caffeinate -i ./$(TARGET_BIN)
 
-# 4. Plot Results
-# Using '-m' allows python to see the root directory (for config imports)
+# 5. Plot Results
 plot: run_fpe
 	mkdir -p $(PLOT_DIR)
 	python3 -m analysis.plot_results
 
-# 5. Run Validation
-# Runs both the Stationary (Mean) check and the PSD (Noise) check
+# 6. Run Validation
 validate: run_fpe
 	mkdir -p $(PLOT_DIR)
 	@echo "--- Checking Stationary Rate (N -> inf) ---"
@@ -66,26 +70,31 @@ validate: run_fpe
 	@echo "--- Checking Power Spectrum (N < inf) ---"
 	python3 -m validation.check_psd
     
-# run just rate check (for N -> inf)
+# Shortcuts
 rate: run_fpe
 	mkdir -p $(PLOT_DIR)
 	@echo "--- Checking Stationary Rate (N -> inf) ---"
 	python3 -m validation.check_rate
 
-# run just psd comparison (N < inf)
 psd: run_fpe
 	mkdir -p $(PLOT_DIR)
 	@echo "--- Checking Power Spectrum (N < inf) ---"
 	python3 -m validation.check_psd
 
-# Check neural mass evolution
 mass: clean run_fpe
 	mkdir -p $(PLOT_DIR)
 	@echo "--- Checking Neural Mass (T -> inf) ---"
 	python3 -m validation.check_neural_mass
 
+# Explicit target to force table regeneration
+lut:
+	python3 generate_lut.py
 
 # Cleanup
 clean:
-	rm -f $(TARGET_BIN) $(SRC_DIR)/params.h
+	rm -f $(TARGET_BIN) $(PARAMS_H)
 	rm -rf $(DATA_DIR) $(PLOT_DIR) $(BIN_DIR)
+
+
+clean_all: clean
+	rm -f $(LUT_FILE)
