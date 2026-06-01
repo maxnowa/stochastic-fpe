@@ -5,6 +5,26 @@
 #include <time.h>
 #include <stdint.h>
 
+// data structure for the LUT header
+#pragma pack(push, 1)
+typedef struct
+{
+    char magic[4];
+    int32_t n_mu;
+    int32_t n_sigma;
+    double mu_min;
+    double mu_max;
+    double d_min;
+    double d_max;
+} LUTHeader;
+#pragma pack(pop)
+
+typedef struct
+{
+    LUTHeader meta;
+    double *data;
+} LoadedLUT;
+
 void initialize_system(double *p, double *v_grid, int N, double dx, double V_min, double mu, double tau);
 void swap_pointers(double **p, double **p_new);
 void diffusion_crank_nicholson(double *p, int N, double D, double tau, double dx, double dt, double *x, double *a, double *b, double *c, double *scratch);
@@ -14,6 +34,12 @@ void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, 
 double set_dt(double *v_grid, int N, double sf, double dx, double D);
 double get_upwind_flux(double *p, int i, double v, double dt, double dx, int N);
 void update_v_grid(double *v_grid, int N, double dx, double V_min, double mu, double tau);
+LoadedLUT load_lut(const char *filename);
+void free_lut(LoadedLUT *lut) {
+        free(lut->data);
+        lut->data = NULL; 
+};
+double get_lambda(LoadedLUT *lut, double target_mu, double target_sigma);
 
 // Generates standard normal random number N(0,1)
 double randn()
@@ -31,6 +57,8 @@ int main()
     // for recurrent connections
     int recurrence_mode = PARAM_RECURRENCE;
     int delay = PARAM_DELAY;
+    // burn in period of 10 percent
+    float burn_in = 0.1;
 
     int N = PARAM_GRID_N;
     double D = PARAM_D;
@@ -43,13 +71,16 @@ int main()
     // FIX for the w!=0 case, because mu changes at each step -> this requires re-calculation at each time step, which could make the solver unstable
     // what could be done is that instead of using the instantaneous rate, we low pass filter it or use a running average of lambda/rate
     double lambda = PARAM_R0 / PARAM_CV;
+    LoadedLUT lut = load_lut("src/lambda_table.bin");
+    
     // UNSAFE initial value
     double dt = 1e-5;
     double w = PARAM_W;
     double connectivity_p = PARAM_CONNECTIVITY;
     double sigma_w_squared = 0.0;
-    // Calculate Weight Variance 
-    if (connectivity_p < 1.0 && connectivity_p > 0.0) {
+    // Calculate Weight Variance
+    if (connectivity_p < 1.0 && connectivity_p > 0.0)
+    {
         sigma_w_squared = (w * w) * (1.0 - connectivity_p) / connectivity_p;
     }
 
@@ -81,9 +112,9 @@ int main()
     {
         double max_anticipated_rate = (w > 0) ? 600.0 : 300.0;
         double mu_extreme = mu + (w * max_anticipated_rate);
-        
-        double v_speed_base = fmax(fabs((mu - V_min)/tau), fabs((mu - V_max)/tau));
-        double v_speed_extreme = fmax(fabs((mu_extreme - V_min)/tau), fabs((mu_extreme - V_max)/tau));
+
+        double v_speed_base = fmax(fabs((mu - V_min) / tau), fabs((mu - V_max) / tau));
+        double v_speed_extreme = fmax(fabs((mu_extreme - V_min) / tau), fabs((mu_extreme - V_max) / tau));
 
         double v_max_worst = fmax(v_speed_base, v_speed_extreme);
 
@@ -116,6 +147,9 @@ int main()
 
     FILE *fp_density = fopen("data/density.bin", "wb");
     FILE *fp_activity = fopen("data/activity.bin", "wb");
+    // file for storing mu and D
+    FILE *fp_vars = fopen("data/variables.bin", "wb");
+
 
     // initialize buffer to block write the data
     float p_buffer[N];
@@ -132,36 +166,49 @@ int main()
         double A_t_delayed = history_A_t[write_idx];
         double r_t_delayed = history_r_t[write_idx];
         // calculate effective drift
-        double mu_eff = mu; 
-        if (recurrence_mode == 1) {
+        double mu_eff = mu;
+        if (recurrence_mode == 1)
+        {
             mu_eff += (w * A_t_delayed);
         }
         // calculate effective diffusion for p<1
         double D_eff = D;
-        if (recurrence_mode == 1 && connectivity_p < 1.0) {
+        if (recurrence_mode == 1 && connectivity_p < 1.0)
+        {
             // D_w(t) = (sigma_w^2 / 2N) * r(t-d)
             D_eff += (sigma_w_squared / (2.0 * N_neurons)) * r_t_delayed;
         }
+
+        if (recurrence_mode == 1 && t > (int)burn_in*steps) {
+            lambda = get_lambda(&lut, mu_eff, D_eff);
+        }
+
+
+        
 
         update_v_grid(v_grid, N, dx, V_min, mu_eff, tau);
         double v_exit = (mu_eff - V_th) / tau;
 
         // --- Runtime CFL Safety Check ---
         double current_max_v = 0.0;
-        for (int i = 0; i < N; i++) {
-            if (fabs(v_grid[i]) > current_max_v) {
+        for (int i = 0; i < N; i++)
+        {
+            if (fabs(v_grid[i]) > current_max_v)
+            {
                 current_max_v = fabs(v_grid[i]);
             }
         }
-        
+
         // Check also the exit velocity as it might be the highest
-        if (fabs(v_exit) > current_max_v) {
-             current_max_v = fabs(v_exit);
+        if (fabs(v_exit) > current_max_v)
+        {
+            current_max_v = fabs(v_exit);
         }
 
         // CFL Condition: (v * dt) / dx must be <= 1.0 (ideally <= 0.8 for safety)
-        if ((current_max_v * dt) / dx > 1.0) {
-            printf("\nCRITICAL ERROR at Step %d (t=%.4fs):\n", t, t*dt);
+        if ((current_max_v * dt) / dx > 1.0)
+        {
+            printf("\nCRITICAL ERROR at Step %d (t=%.4fs):\n", t, t * dt);
             printf("  Stability violation detected!\n");
             printf("  Max Velocity: %.2f mV/ms\n", current_max_v);
             printf("  Required dt: < %.2e s\n", dx / current_max_v);
@@ -226,7 +273,6 @@ int main()
         if (J_out < 0)
             J_out = 0.0;
 
-            
         double r_t = 0.0;
         switch (PARAM_METHOD)
         {
@@ -312,6 +358,13 @@ int main()
 
         // Write 2 floats at once
         fwrite(act_data, sizeof(float), 2, fp_activity);
+
+        float var_data[3];
+        var_data[0] = (float)mu_eff;
+        var_data[1] = (float)D_eff;
+        var_data[2] = (float)lambda;
+        fwrite(var_data, sizeof(float), 3, fp_vars);
+        
         // --- INSERT 2: PRINT PROGRESS ---
         if (t % report_interval == 0)
         {
@@ -342,6 +395,7 @@ int main()
 
     fclose(fp_density);
     fclose(fp_activity);
+    fclose(fp_vars);
     // Free all memory
     free(p);
     free(p_new);
@@ -354,6 +408,8 @@ int main()
     free(v_grid);
     free(history_A_t);
     free(history_r_t);
+
+    free_lut(&lut);
 
     printf("\r[100%%] Simulation Complete. Total time: %.1fs\n",
            (double)(clock() - start_time) / CLOCKS_PER_SEC);
@@ -436,7 +492,6 @@ void thomas(const int X, double *x, const double *a, const double *b, const doub
     for (int ix = X - 2; ix >= 0; ix--)
         x[ix] -= scratch[ix] * x[ix + 1];
 }
-
 
 // drift caclulated using second-order TVD upwind differencing scheme - we are using Lax-Wendroff correction and van Leer flux limiter
 void drift(double *p, double *p_new, double *flux, int N, double dx, double dt, double *v_grid, double v_exit)
@@ -543,7 +598,7 @@ double slope_limiter(double *p, int i)
     // return value based on slope
     // this make it second order in space because we take the shape into account
     else
-    {   
+    {
         // this implicitly calculates slope*phi(r)
         double limited_slope = (2 * slope_left * slope_right) / (slope_left + slope_right);
         return limited_slope;
@@ -580,4 +635,56 @@ double set_dt(double *v_grid, int N, double sf, double dx, double D)
         dt = 1.0 / (max_v * sf);
     }
     return dt;
+}
+
+LoadedLUT load_lut(const char *filename)
+{
+    LoadedLUT result = {0};
+
+    // read the header
+    FILE *file = fopen(filename, "rb");
+    fread(&result.meta, sizeof(LUTHeader), 1, file);
+
+    // total size of the table and read table
+    size_t total_elements = (size_t)result.meta.n_mu * (size_t)result.meta.n_sigma;
+    result.data = (double *)malloc(total_elements * sizeof(double));
+
+    // read the data
+    size_t elements_read = fread(result.data, sizeof(double), total_elements, file);
+    if (elements_read != total_elements) {
+        fprintf(stderr, "Warning: Expected %zu elements, read %zu.\n", total_elements, elements_read);
+    }
+    fclose(file);
+    return result;
+}
+
+double get_lambda(LoadedLUT *lut, double target_mu, double target_sigma) {
+    // 1. Calculate the normalized fraction (0.0 to 1.0)
+    double mu_range = lut->meta.mu_max - lut->meta.mu_min;
+    double sigma_range = lut->meta.d_max - lut->meta.d_min;
+    
+    double mu_fraction = (target_mu - lut->meta.mu_min) / mu_range;
+    double sigma_fraction = (target_sigma - lut->meta.d_min) / sigma_range;
+
+    // 2. Convert to float indices
+    // We multiply by (N - 1) because a 400-element array's maximum index is 399
+    double mu_idx_float = mu_fraction * (lut->meta.n_mu - 1);
+    double sigma_idx_float = sigma_fraction * (lut->meta.n_sigma - 1);
+
+    // 3. Round to the nearest integer (Nearest Neighbor lookup)
+    int mu_idx = (int)round(mu_idx_float);
+    int sigma_idx = (int)round(sigma_idx_float);
+
+    // 4. Safety Clamp: Ensure we don't read out of memory bounds
+    // If target values are outside min/max, clamp them to the edges of the LUT
+    if (mu_idx < 0) mu_idx = 0;
+    if (mu_idx >= lut->meta.n_mu) mu_idx = lut->meta.n_mu - 1;
+    
+    if (sigma_idx < 0) sigma_idx = 0;
+    if (sigma_idx >= lut->meta.n_sigma) sigma_idx = lut->meta.n_sigma - 1;
+
+    // 5. Calculate 1D index and return the value
+    int flat_index = (mu_idx * lut->meta.n_sigma) + sigma_idx;
+    
+    return lut->data[flat_index];
 }
