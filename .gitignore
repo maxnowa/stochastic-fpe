@@ -16,9 +16,12 @@ bin/
 *.csv
 *.dat
 *.txt
+*.bin
 plots/
 data/
 todo.md
 literature/
 results/
 report/
+logs/
+debug.py
