@@ -57,8 +57,10 @@ int main()
     // for recurrent connections
     int recurrence_mode = PARAM_RECURRENCE;
     int delay = PARAM_DELAY;
-    // burn in period of 10 percent
-    float burn_in = 0.1;
+    // burn in period
+    float burn_in = 0.0;
+    // this sets the low pass filtering of lambda
+    int filter = 0;
 
     int N = PARAM_GRID_N;
     double D = PARAM_D;
@@ -127,6 +129,12 @@ int main()
             dt = (1.0 * dx) / (v_max_worst);
         }
     }
+
+    // we add a low pass filtered lambda with a sepcific time constant
+    double tau_lambda = 1;
+    double lambda_filtered = lambda;
+    double alpha = 1.0 - exp(-dt/tau_lambda);
+
     int buffer_size = (int)(delay / dt);
     // this stores the past rates
     double *history_A_t = (double *)calloc((buffer_size + 1), sizeof(double));
@@ -179,12 +187,16 @@ int main()
             D_eff += (sigma_w_squared / (2.0 * N_neurons)) * r_t_delayed;
         }
 
-        if (recurrence_mode == 1 && t > (int)burn_in*steps) {
-            lambda = get_lambda(&lut, mu_eff, D_eff);
+        if (recurrence_mode == 1 && t > (int)(burn_in*steps)) {
+            double lambda_new = get_lambda(&lut, mu_eff, D_eff);
+            if (filter == 1) {
+                lambda_filtered = (1-alpha)*lambda_filtered + alpha*lambda_new;
+                lambda = lambda_filtered;
+            } else {
+                lambda = lambda_new;
+            }
+
         }
-
-
-        
 
         update_v_grid(v_grid, N, dx, V_min, mu_eff, tau);
         double v_exit = (mu_eff - V_th) / tau;

@@ -25,3 +25,4 @@ results/
 report/
 logs/
 debug.py
+publication/cache/

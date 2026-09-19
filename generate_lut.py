@@ -15,7 +15,6 @@ V_TH = 1.0       # mV
 V_RESET = 0.0    # mV
 
 # --- Grid Configuration ---
-# 200x200 is sufficient for interpolation.
 MU_MIN, MU_MAX = -2.0, 6.0   
 N_MU = 500       
 

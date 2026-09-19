@@ -8,10 +8,10 @@ import numpy as np
 # These are used only if params.h doesn't exist yet
 DEFAULT_PARAMS = {
     "PARAM_N_NEURONS": 500,
-    "PARAM_T_MAX":     10000.0,
+    "PARAM_T_MAX":     40000.0,
     "PARAM_TAU":       1,
-    "PARAM_MU":        0.8,
-    "PARAM_D":         0.1,
+    "PARAM_MU":        0.9,
+    "PARAM_D":         0.01,
     "PARAM_V_TH":      1.0,
     "PARAM_V_RESET":   0.0,
     "PARAM_DT_NET":    0.005,
@@ -20,9 +20,9 @@ DEFAULT_PARAMS = {
     "PARAM_METHOD":    1, 
     "PARAM_FLUX_METHOD": 1,
     "PARAM_DELAY": 0,
-    "PARAM_W": 0.1,
+    "PARAM_W": 0.05,
     "PARAM_RECURRENCE": 1,
-    "PARAM_CONNECTIVITY": 0.8,
+    "PARAM_CONNECTIVITY": 0.5,
 }
 
 PARAMS_HEADER_PATH = "src/params.h"
