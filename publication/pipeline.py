@@ -310,6 +310,45 @@ def run_micro(params, t_max_ms, seed=1, verbose=True, bridge=None):
 
 
 # ==========================================================================
+# Machine-independent cost
+# ==========================================================================
+# Wall-clock time answers "how long on this laptop", which is not the claim.
+# The claim is algorithmic: the solver advances a fixed grid, the network
+# advances one state variable per neuron. Counting state updates per unit of
+# simulated time makes that comparable across machines, languages and degrees
+# of parallelism -- parallelism redistributes work, it does not remove it.
+#
+# Note what this measure does NOT capture. Both methods have an irreducible
+# sequential chain of time steps, and the solver's CFL condition gives it more
+# of them than the network needs. On unlimited hardware the network therefore
+# wins on elapsed time. The solver's advantage is in work and in memory.
+def solver_steps_per_ms(params):
+    """Time steps the solver takes per millisecond of simulated time.
+
+    Mirrors set_dt() in src/stochastic_fpe.c for the unconnected branch:
+    the step is one cell width divided by the fastest drift on the grid,
+    with the solver's stability factor of 4.
+    """
+    stability_factor = 4.0
+    dx = (configs.V_MAX - configs.V_MIN) / params["GRID_N"]
+    v_max = max(abs(params["MU"] - configs.V_MIN),
+                abs(params["MU"] - configs.V_MAX)) / params["TAU"]
+    return (v_max * stability_factor) / dx
+
+
+def state_updates_per_ms(params, n_neurons=None):
+    """(solver, network) state updates per millisecond of simulated time.
+
+    The solver figure is independent of the population; the network figure is
+    one update per neuron per step.
+    """
+    meso = params["GRID_N"] * solver_steps_per_ms(params)
+    n = params["N_NEURONS"] if n_neurons is None else n_neurons
+    micro = np.asarray(n) * (1.0 / params["DT_NET"])
+    return meso, micro
+
+
+# ==========================================================================
 # Analytical finite-size spectrum
 # ==========================================================================
 def exact_spectrum(freqs_hz, params, rate_hz):

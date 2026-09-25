@@ -250,8 +250,86 @@ FIGURES = {
         "micro": True,
         "exact": False,
     },
+    # Pure arithmetic from the grid size and the two time steps -- no
+    # simulation, no machine. Counts work rather than elapsed time, so the
+    # cost claim survives the objection that a parallel network implementation
+    # would change the wall-clock picture.
+    "fig8_work_scaling": {
+        "runs": [],
+        "micro": False,
+        "exact": False,
+    },
+    # Supplementary. No analytical spectrum: it exists only for the
+    # unconnected case, so these are checked against the network.
+    "figS1_fc_regimes": {
+        "runs": ["sup_fc_supra_low", "sup_fc_supra_high",
+                 "sup_fc_sub_low", "sup_fc_sub_high"],
+        "micro": True, "exact": False,
+    },
+    "figS2_rc_regimes": {
+        "runs": ["sup_rc_supra_low", "sup_rc_supra_high",
+                 "sup_rc_sub_low", "sup_rc_sub_high"],
+        "micro": True, "exact": False,
+    },
+    "figS3_inhibitory": {
+        "runs": ["sup_inh_supra_low", "sup_inh_supra_high",
+                 "sup_inh_sub_low", "sup_inh_sub_high"],
+        "micro": True, "exact": False,
+    },
+    # Built by publication/lambda_trace.py, which keeps the solver's
+    # variables.bin rather than reducing it away.
+    "figS5_lambda": {
+        "runs": [], "micro": False, "exact": False,
+    },
+    "figS4_delay": {
+        "runs": ["sup_delay_1", "sup_delay_2",
+                 "sup_delay_3", "sup_delay_5"],
+        "micro": True, "exact": False,
+    },
 }
 
+
+
+# --------------------------------------------------------------------------
+# Supplementary runs
+# --------------------------------------------------------------------------
+# Recurrence across every regime, for both topologies, plus an inhibitory
+# weight and a transmission delay. Each needs its own step size: the drive
+# bound the solver assumes is hard-coded for one operating point and is simply
+# wrong for a negative weight, so recurrent_plan computes what each run needs.
+#
+# Half the simulated time of the main runs and three seeds, since these are
+# supplementary; that still leaves 18 one-second Bartlett segments per seed.
+# The microscopic reference is the plain scheme, as in figures 4 and 7.
+import recurrent_plan as _rp                                # noqa: E402
+
+_SUP_T = 20000.0
+_REGIMES = [("supra_low", 1.2, 0.01), ("supra_high", 1.2, 0.10),
+            ("sub_low", 0.8, 0.01), ("sub_high", 0.8, 0.10)]
+
+_SUPPLEMENTARY = {}
+for _name, _mu, _d in _REGIMES:
+    # S1 fully connected, S2 random, S3 inhibitory -- all four regimes each.
+    _SUPPLEMENTARY[f"sup_fc_{_name}"] = cfg(
+        MU=_mu, D=_d, W=0.1, CONNECTIVITY=1.0, RECURRENCE=1, T_MAX=_SUP_T)
+    _SUPPLEMENTARY[f"sup_rc_{_name}"] = cfg(
+        MU=_mu, D=_d, W=0.1, CONNECTIVITY=0.5, RECURRENCE=1, T_MAX=_SUP_T)
+    _SUPPLEMENTARY[f"sup_inh_{_name}"] = cfg(
+        MU=_mu, D=_d, W=-0.05, CONNECTIVITY=1.0, RECURRENCE=1, T_MAX=_SUP_T)
+
+# S4 delay, fully connected in the suprathreshold low-noise regime. The delay
+# is an int in the solver, so it is a whole number of milliseconds.
+SUP_DELAYS = [1, 2, 3, 5]
+for _d_ms in SUP_DELAYS:
+    _SUPPLEMENTARY[f"sup_delay_{_d_ms}"] = cfg(
+        MU=1.2, D=0.01, W=0.1, CONNECTIVITY=1.0, RECURRENCE=1,
+        DELAY=_d_ms, T_MAX=_SUP_T)
+
+RUNS.update(_SUPPLEMENTARY)
+for _tag, _p in _SUPPLEMENTARY.items():
+    RUN_PATCHES[_tag] = _rp.patches(_p)
+    RUN_SEEDS[_tag] = SEEDS[:3]
+    RUN_MICRO_BRIDGE[_tag] = False
 
 def needs_micro(tag):
     return any(tag in f["runs"] and f["micro"] for f in FIGURES.values())

@@ -40,8 +40,8 @@ import pubstyle as ps                                       # noqa: E402
 from pipeline import val                                    # noqa: E402
 
 PANELS = [
-    ("sparse_fc", "Fully connected", r"$p=1$"),
-    ("sparse_rc", "Sparse random", r"$p=0.01$,  10 inputs/neuron"),
+    ("sparse_fc", "Fully connected"),
+    ("sparse_rc", "Sparse random"),
 ]
 
 F_MIN, F_MAX = 3.0, 1e4
@@ -56,7 +56,7 @@ def main():
 
     reference = None        # fully connected mesoscopic, repeated in panel B
 
-    for col, (tag, title, subtitle) in enumerate(PANELS):
+    for col, (tag, title) in enumerate(PANELS):
         data = pipeline.load_ensemble(tag)
         ax = axes[col]
         ps.log_grid(ax)
@@ -89,7 +89,9 @@ def main():
         ax.set_yscale("log")
         ax.set_xlim(F_MIN, F_MAX)
         ax.set_xlabel("Frequency (Hz)")
-        ax.set_title(f"{title}\n{subtitle}", pad=10)
+        ax.set_title(f"{title}\n"
+                     f"$p={val(data, 'param_CONNECTIVITY'):g}$,  "
+                     f"$w={val(data, 'param_W'):g}$", pad=10)
         ps.loglog_ticks(ax, label_minor_x=(F_MIN,))
         ps.panel_tag(ax, "AB"[col], dx=-0.17 if col == 0 else -0.06)
 

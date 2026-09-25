@@ -26,3 +26,4 @@ report/
 logs/
 debug.py
 publication/cache/
+publication/output

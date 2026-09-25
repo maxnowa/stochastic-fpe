@@ -20,11 +20,22 @@ import pubstyle as ps                                       # noqa: E402
 FIG_W, FIG_H = 6.4, 4.6
 PLACED_CM = ps.POSTER_COLUMN_CM
 
+# This panel carries two lines and almost no detail, so it can afford -- and
+# reads better with -- heavier type and strokes than the spectra do. Raising
+# the target tick size scales fonts and line widths together.
+#
+# Tuned so that save() reports 40 pt, which is the size the labels actually
+# print at: set_style_for scales from the declared figure width, while the
+# file is saved at its tight bounding box, about ten percent narrower, so the
+# nominal target comes out correspondingly under the printed size.
+TICK_PT = 36.4
+MARKER = 11
+
 CACHE_FILE = os.path.join(pipeline.CACHE, "benchmark.npz")
 
 
 def main():
-    ps.set_style_for(FIG_W, PLACED_CM)
+    ps.set_style_for(FIG_W, PLACED_CM, target_tick_pt=TICK_PT)
 
     if not os.path.exists(CACHE_FILE):
         raise FileNotFoundError(
@@ -36,9 +47,9 @@ def main():
     fig, ax = plt.subplots(figsize=(FIG_W, FIG_H))
     ps.log_grid(ax)
 
-    ax.plot(n, micro, color=ps.C["micro"], lw=ps.LW_MICRO, marker="o", ms=7,
+    ax.plot(n, micro, color=ps.C["micro"], lw=ps.LW_MICRO, marker="o", ms=MARKER,
             zorder=4, label=ps.LABEL["micro"])
-    ax.plot(n, meso, color=ps.C["meso"], lw=ps.LW_DATA, marker="s", ms=7,
+    ax.plot(n, meso, color=ps.C["meso"], lw=ps.LW_DATA, marker="s", ms=MARKER,
             zorder=5, label=ps.LABEL["meso"])
 
     ax.set_xscale("log")
